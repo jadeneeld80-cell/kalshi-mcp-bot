@@ -128,18 +128,23 @@ export function train(weights, data, dataUp, dataDown) {
   }
 }
 
-// Ensemble prediction — weighted average by sample count
-export function predict(weights, features, featuresNorm, dataUp, dataDown) {
+// Ensemble prediction — weighted by sample count, direction-aware.
+// featuresNorm must already be flipped for DOWN bets (caller's responsibility).
+// bet determines which directional NN joins the ensemble.
+export function predict(weights, features, featuresNorm, bet, dataUp, dataDown) {
   const combined = forward(weights.w1, weights.b1, weights.w2, weights.b2, featuresNorm).output[0];
-  const upPred   = forward(weights.w1Up, weights.b1Up, weights.w2Up, weights.b2Up, features).output[0];
-  const downPred = 1 - forward(weights.w1Down, weights.b1Down, weights.w2Down, weights.b2Down, features).output[0];
 
-  const nCombined = 1; // always include combined
-  const nUp   = Math.max(1, dataUp.length);
-  const nDown = Math.max(1, dataDown.length);
-  const total = nCombined + nUp + nDown;
-
-  return (combined * nCombined + upPred * nUp + downPred * nDown) / total;
+  if (bet === 'UP') {
+    if (!dataUp.length) return combined;
+    const upPred = forward(weights.w1Up, weights.b1Up, weights.w2Up, weights.b2Up, features).output[0];
+    const n = dataUp.length;
+    return (combined + upPred * n) / (1 + n);
+  } else {
+    if (!dataDown.length) return combined;
+    const downPred = forward(weights.w1Down, weights.b1Down, weights.w2Down, weights.b2Down, features).output[0];
+    const n = dataDown.length;
+    return (combined + downPred * n) / (1 + n);
+  }
 }
 
 // Add a sample to the training data arrays, maintaining buffer caps
