@@ -1,0 +1,20 @@
+{
+  "name": "kalshi-mcp-bot",
+  "version": "1.0.0",
+  "description": "Kalshi 15M BTC/ETH trading bot with MCP server",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test-auth": "node src/kalshi/test-auth.js",
+    "export-brain": "node src/nn/export-brain.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "dotenv": "^16.0.0",
+    "ws": "^8.0.0"
+  }
+}
