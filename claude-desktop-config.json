@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "kalshi-mcp-bot": {
+      "command": "node",
+      "args": [
+        "/Users/ndehawasum/Documents/GitHub/kalshi-mcp-bot/src/index.js",
+        "--mcp"
+      ]
+    }
+  }
+}
