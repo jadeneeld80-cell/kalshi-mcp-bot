@@ -29,8 +29,6 @@ function checkGates(s, balance, btcVelocity) {
   const regime = priceFeed.getRegime('BTC'); // market condition uses BTC as base
   const elapsed = 900 - secsLeft; // seconds into window
 
-  const BALANCE_GUARD = 5;
-
   if (spread > 0.20)                                    return { blocked: true, reason: 'SPREAD' };
   if (yesPrice >= 0.44 && yesPrice <= 0.56)             return { blocked: true, reason: 'DEADZONE' };
   if (elapsed < 120)                                    return { blocked: true, reason: 'EARLY' };
@@ -41,12 +39,10 @@ function checkGates(s, balance, btcVelocity) {
   if (liquidity === 'LOW')                              return { blocked: true, reason: 'MKTCOND' };
   if (liquidity === 'MEDIUM' && regime === 'CHOPPY')    return { blocked: true, reason: 'MKTCOND' };
 
-  if (balance > BALANCE_GUARD) {
-    if (dailyStartBalance && dailyPnL <= -(dailyStartBalance * 0.08))
-      return { blocked: true, reason: 'DAILYCAP' };
-    if (sessionStartBalance && sessionPnL <= -(sessionStartBalance * 0.05))
-      return { blocked: true, reason: 'SESSIONKILL' };
-  }
+  if (dailyStartBalance && dailyPnL <= -(dailyStartBalance * 0.08))
+    return { blocked: true, reason: 'DAILYCAP' };
+  if (sessionStartBalance && sessionPnL <= -(sessionStartBalance * 0.05))
+    return { blocked: true, reason: 'SESSIONKILL' };
 
   // Crowd block: YES velocity sustained against model for last 4 readings > 0.5¢/s
   if (crowdVelHistory.length >= 4) {

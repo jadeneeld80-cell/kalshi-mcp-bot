@@ -3,6 +3,8 @@ import { checkFarmBot } from './farmBot.js';
 import { checkAutoBuy } from './autoBuy.js';
 import { checkExit } from './exitManager.js';
 import { startSession, startDay } from './riskManager.js';
+import { loadBotState } from './botStateStore.js';
+import { writeStateSnapshot } from './stateSnapshot.js';
 import { priceFeed } from '../prices/binance.js';
 import { krakenFallback } from '../prices/kraken.js'; // activates fallback wiring
 import { KalshiWebSocket } from '../kalshi/websocket.js';
@@ -48,15 +50,22 @@ function etHour() {
   return (new Date().getUTCHours() - 4 + 24) % 24;
 }
 
-function getLiquidity(asset, hour) {
-  // BTC liquidity schedule
+// Fix 1: Dynamic spread-based liquidity — replaces fixed clock schedule.
+// Spread < 3¢ → HIGH, < 6¢ → MEDIUM, otherwise → LOW.
+// Falls back to clock-based estimate when YES prices aren't available yet.
+function getLiquidity(asset, hour, yesAsk, yesBid) {
+  if (yesAsk !== null && yesBid !== null) {
+    const spread = yesAsk - yesBid;
+    if (spread < 0.03) return 'HIGH';
+    if (spread < 0.06) return 'MEDIUM';
+    return 'LOW';
+  }
+  // Fallback: clock-based estimate while orderbook warms up
   const btcLiq =
     (hour >= 3 && hour < 13) || hour >= 20 ? 'HIGH' :
     (hour >= 1 && hour < 3)  || (hour >= 13 && hour < 17) ? 'MEDIUM' :
     'LOW';
-
   if (asset === 'BTC') return btcLiq;
-  // ETH is one tier lower outside US open hours (9am–4pm ET)
   if (hour >= 9 && hour < 16) return btcLiq;
   return btcLiq === 'HIGH' ? 'MEDIUM' : 'LOW';
 }
@@ -68,6 +77,9 @@ async function onWindowRoll(asset) {
   s.ticksAbove = 0;
   s.ticksTotal = 0;
   s.windowOpenPrice = priceFeed.getPrice(asset);
+  // Clear stale prices so tick() skips this asset until fresh WS data arrives
+  s.yesAsk = null;
+  s.yesBid = null;
 
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
@@ -103,7 +115,7 @@ async function tick() {
   for (const asset of ['BTC', 'ETH']) {
     const s = state[asset];
     s.secsLeft  = sl;
-    s.liquidity = getLiquidity(asset, hour);
+    s.liquidity = getLiquidity(asset, hour, s.yesAsk, s.yesBid);
     s.regime    = priceFeed.getRegime(asset);
 
     // YES velocity history (rolling, for reversal detection)
@@ -185,9 +197,13 @@ export async function startClock() {
     console.log(`[Clock] Balance: $${state.balance.toFixed(2)}`);
   } catch {}
 
+  // Restore persisted arm state (farm/autobuy armed flags)
+  loadBotState();
+
   // 1-second heartbeat
   setInterval(() => {
     tick().catch(err => console.error('[Clock] tick error:', err.message));
+    writeStateSnapshot();
   }, 1000);
 
   console.log('[Clock] Running.');

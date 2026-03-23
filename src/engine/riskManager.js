@@ -1,16 +1,18 @@
 // Pure guard functions — return { blocked, reason } or mutate P&L counters.
 // All dollar values in USD.
 
-const RISK_DAILY_CAP    = 0.08;    // stop after 8% daily loss
-const RISK_SESSION_KILL = 0.05;    // stop after 5% session loss
-const RISK_CONSEC_BRAKE = 3;       // stop after 3 consecutive losses
-const RISK_COOLDOWN_MS  = 45_000;  // 45s cooldown after each loss
-const BALANCE_GUARD     = 5;       // don't apply loss guards below $5
+const RISK_DAILY_CAP        = 0.08;    // stop after 8% daily loss
+const RISK_SESSION_KILL     = 0.05;    // stop after 5% session loss
+const RISK_CONSEC_BRAKE     = 3;       // stop after 3 consecutive losses
+const RISK_COOLDOWN_MS      = 45_000;  // 45s cooldown after normal loss
+// Fix 5: Shorter cooldown for high-confidence modes (DECAY, STRONG_CONVICTION)
+export const RISK_COOLDOWN_FAST_MS = 20_000;
 
-export function checkRiskGuards(s, balance) {
+export function checkRiskGuards(s, balance, fastCooldown = false) {
   const now = Date.now();
+  const cooldown = fastCooldown ? RISK_COOLDOWN_FAST_MS : RISK_COOLDOWN_MS;
 
-  if (now - s.lastLossTime < RISK_COOLDOWN_MS) {
+  if (now - s.lastLossTime < cooldown) {
     return { blocked: true, reason: 'COOLDOWN' };
   }
 
@@ -18,15 +20,14 @@ export function checkRiskGuards(s, balance) {
     return { blocked: true, reason: 'STREAK' };
   }
 
-  if (balance > BALANCE_GUARD) {
-    if (s.sessionStartBalance !== null &&
-        s.sessionPnL <= -(s.sessionStartBalance * RISK_SESSION_KILL)) {
-      return { blocked: true, reason: 'SESSIONKILL' };
-    }
-    if (s.dailyStartBalance !== null &&
-        s.dailyPnL <= -(s.dailyStartBalance * RISK_DAILY_CAP)) {
-      return { blocked: true, reason: 'DAILYCAP' };
-    }
+  if (s.sessionStartBalance !== null &&
+      s.sessionPnL <= -(s.sessionStartBalance * RISK_SESSION_KILL)) {
+    return { blocked: true, reason: 'SESSIONKILL' };
+  }
+
+  if (s.dailyStartBalance !== null &&
+      s.dailyPnL <= -(s.dailyStartBalance * RISK_DAILY_CAP)) {
+    return { blocked: true, reason: 'DAILYCAP' };
   }
 
   return { blocked: false };

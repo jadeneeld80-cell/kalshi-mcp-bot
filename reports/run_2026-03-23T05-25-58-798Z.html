@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kalshi AutoResearch Report — quick_1774243558798</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }
+  h1  { font-size: 1.8rem; margin-bottom: 4px; color: #f8fafc; }
+  .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: #1e293b; border-radius: 12px; padding: 20px; }
+  .card h3 { font-size: 0.8rem; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
+  .card .big { font-size: 2rem; font-weight: 700; }
+  .green { color: #22c55e; }
+  .red   { color: #ef4444; }
+  .yellow { color: #eab308; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-card { background: #1e293b; border-radius: 12px; padding: 20px; }
+  .chart-card h3 { font-size: 0.9rem; color: #94a3b8; margin-bottom: 16px; }
+  .full { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
+  th { background: #0f172a; color: #64748b; font-size: 0.75rem; text-transform: uppercase; padding: 10px 14px; text-align: left; }
+  td { padding: 10px 14px; border-top: 1px solid #334155; font-size: 0.85rem; }
+  tr:hover td { background: #263148; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; }
+  .badge-green { background: #14532d; color: #22c55e; }
+  .badge-red   { background: #7f1d1d; color: #ef4444; }
+  @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Kalshi AutoResearch Report</h1>
+<p class="sub">Run: quick_1774243558798 &nbsp;|&nbsp; 2026-03-23T05:25:58.798Z &nbsp;|&nbsp; 5 optimization cycles</p>
+
+<div class="grid">
+  <div class="card">
+    <h3>Final Score</h3>
+    <div class="big red">0.0%</div>
+  </div>
+  <div class="card">
+    <h3>Total Trades</h3>
+    <div class="big">1</div>
+  </div>
+  <div class="card">
+    <h3>Win Rate</h3>
+    <div class="big red">0.0%</div>
+  </div>
+  <div class="card">
+    <h3>Net PnL</h3>
+    <div class="big red">$-0.42</div>
+  </div>
+</div>
+
+<div class="charts">
+  <div class="chart-card">
+    <h3>Score Over Optimization Cycles</h3>
+    <canvas id="scoreChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Cumulative PnL per Cycle</h3>
+    <canvas id="pnlChart"></canvas>
+  </div>
+  <div class="chart-card full">
+    <h3>Evaluation Questions Score (18 Questions)</h3>
+    <canvas id="qChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Win Rate by Farm Mode</h3>
+    <canvas id="modeChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Trades per Cycle</h3>
+    <canvas id="tradeChart"></canvas>
+  </div>
+</div>
+
+<div style="margin-bottom:24px">
+  <h2 style="margin-bottom:12px; font-size:1.1rem; color:#94a3b8">Evaluation Questions</h2>
+  <table>
+    <thead><tr><th>#</th><th>Question</th><th>Score</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>
+      
+    </tbody>
+  </table>
+</div>
+
+
+<div style="margin-bottom:24px">
+  <h2 style="margin-bottom:12px; font-size:1.1rem; color:#94a3b8">Parameter Changes Accepted</h2>
+  <table>
+    <thead><tr><th>Round</th><th>Parameter</th><th>Direction</th><th>From</th><th>To</th><th>Score After</th></tr></thead>
+    <tbody>
+      
+    </tbody>
+  </table>
+</div>
+
+<script>
+const scoreData = [{"x":1,"y":0},{"x":2,"y":0},{"x":3,"y":0},{"x":4,"y":0},{"x":5,"y":0}];
+const pnlData   = [{"x":1,"y":-0.42},{"x":2,"y":-0.42},{"x":3,"y":-0.42},{"x":4,"y":-0.42},{"x":5,"y":-0.42}];
+const tradeData = [{"x":1,"y":1},{"x":2,"y":1},{"x":3,"y":1},{"x":4,"y":1},{"x":5,"y":1}];
+const qLabels   = [];
+const qScores   = [];
+const qColors   = [];
+const modeLabels = ["CONVICTION"];
+const modeWR     = [0];
+
+const chartDefaults = {
+  responsive: true,
+  plugins: { legend: { labels: { color: '#94a3b8' } } },
+  scales: {
+    x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+    y: { ticks: { color: '#64748b' }, grid: { color: '#334155' } },
+  },
+};
+
+new Chart(document.getElementById('scoreChart'), {
+  type: 'line',
+  data: { datasets: [{ label: 'Score %', data: scoreData, borderColor: '#6366f1', tension: 0.3, fill: false }] },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, max: 100 } } },
+});
+
+new Chart(document.getElementById('pnlChart'), {
+  type: 'line',
+  data: { datasets: [{ label: 'Cycle PnL $', data: pnlData, borderColor: '#22c55e', tension: 0.3, fill: true, backgroundColor: 'rgba(34,197,94,0.1)' }] },
+  options: chartDefaults,
+});
+
+new Chart(document.getElementById('qChart'), {
+  type: 'bar',
+  data: {
+    labels: qLabels,
+    datasets: [{ label: 'Score %', data: qScores, backgroundColor: qColors }],
+  },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, max: 100 } } },
+});
+
+new Chart(document.getElementById('modeChart'), {
+  type: 'bar',
+  data: {
+    labels: modeLabels,
+    datasets: [{ label: 'Win Rate %', data: modeWR, backgroundColor: '#6366f1' }],
+  },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, max: 100 } } },
+});
+
+new Chart(document.getElementById('tradeChart'), {
+  type: 'bar',
+  data: { datasets: [{ label: 'Trades', data: tradeData, backgroundColor: '#0ea5e9' }] },
+  options: chartDefaults,
+});
+</script>
+</body>
+</html>

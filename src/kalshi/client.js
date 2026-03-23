@@ -12,7 +12,13 @@ function buildHeaders(method, kalshiPath) {
   const privateKey = normalizePEM(process.env.KALSHI_PRIVATE_KEY);
 
   const ts = Date.now().toString();
-  const pathNoQuery = '/trade-api/v2' + kalshiPath.split('?')[0];
+  // If the caller passes a path that already starts with /trade-api/ (e.g. the
+  // WebSocket endpoint /trade-api/ws/v2), use it verbatim.  Otherwise prepend
+  // the REST base prefix so that short paths like /portfolio/balance work.
+  const rawPath = kalshiPath.split('?')[0];
+  const pathNoQuery = rawPath.startsWith('/trade-api/')
+    ? rawPath
+    : '/trade-api/v2' + rawPath;
   const message = ts + method.toUpperCase() + pathNoQuery;
 
   const sign = crypto.createSign('RSA-SHA256');
@@ -99,9 +105,13 @@ export async function findActiveMarket(asset) {
   const series = asset === 'ETH' ? 'KXETH15M' : 'KXBTC15M';
   const markets = await getMarkets({ series_ticker: series, status: 'open' });
   if (!markets.length) throw new Error(`No open ${series} market found`);
-  // Sort by close_time ascending, take soonest-expiring active one
-  markets.sort((a, b) => new Date(a.close_time) - new Date(b.close_time));
-  return markets[0];
+  // Filter to markets that haven't closed yet (prevents connecting to an
+  // already-expired ticker at window boundaries), then sort by soonest close.
+  const now = Date.now();
+  const future = markets.filter(m => new Date(m.close_time).getTime() > now);
+  if (!future.length) throw new Error(`No future-expiring ${series} market found`);
+  future.sort((a, b) => new Date(a.close_time) - new Date(b.close_time));
+  return future[0];
 }
 
 // Orders

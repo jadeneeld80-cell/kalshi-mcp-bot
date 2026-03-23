@@ -12,6 +12,12 @@ export class KalshiWebSocket {
     this.reconnectTimer = null;
     this.intentionalClose = false;
     this.cmdSeq = 1;
+
+    // In-memory orderbook: price (as string) → quantity (as float)
+    // yesBook: bids for YES contracts
+    // noBook:  bids for NO contracts (best NO bid = 1 - best YES ask)
+    this._yesBook = new Map();
+    this._noBook  = new Map();
   }
 
   connect(ticker) {
@@ -23,8 +29,13 @@ export class KalshiWebSocket {
   _open() {
     if (this.ws) {
       this.ws.removeAllListeners();
+      this.ws.on('error', () => {}); // prevent unhandled error on close-before-open
       this.ws.close();
     }
+
+    // Reset orderbook on reconnect
+    this._yesBook.clear();
+    this._noBook.clear();
 
     const headers = buildHeaders('GET', '/trade-api/ws/v2');
     this.ws = new WebSocket(WS_URL, { headers });
@@ -61,46 +72,102 @@ export class KalshiWebSocket {
   }
 
   _handleMessage(msg) {
-    // Orderbook snapshot or delta — extract best ask (yes) and best bid (yes)
-    const market = msg?.msg?.market_ticker || msg?.params?.market_ticker;
-    const orderbook = msg?.msg?.orderbook || msg?.msg;
+    const type = msg?.type;
+    const data = msg?.msg;
+    if (!data) return;
 
-    if (!orderbook) return;
+    if (type === 'orderbook_snapshot') {
+      // Populate orderbook from snapshot.
+      // yes_dollars_fp: [[price_dollars, qty], ...] — YES bids
+      // no_dollars_fp:  [[price_dollars, qty], ...] — NO bids
+      this._yesBook.clear();
+      this._noBook.clear();
 
-    const yesAsks = orderbook.yes?.filter(([p]) => p > 0);
-    const yesBids = orderbook.yes?.filter(([p]) => p > 0);
-
-    // Orderbook format: [[price_cents, quantity], ...]
-    // Best ask = lowest ask, best bid = highest bid
-    const asks = orderbook.yes_ask || (yesAsks?.length ? [...yesAsks].sort((a, b) => a[0] - b[0]) : null);
-    const bids = orderbook.yes_bid || (yesBids?.length ? [...yesBids].sort((a, b) => b[0] - a[0]) : null);
-
-    // Kalshi orderbook_delta uses 'yes' array for bids and asks separately
-    // The snapshot format: { yes: [[price_cents, qty]...], no: [...] }
-    // Price in cents → divide by 100
-    let yesAsk = null;
-    let yesBid = null;
-
-    if (orderbook.yes_ask !== undefined) {
-      yesAsk = orderbook.yes_ask / 100;
-      yesBid = orderbook.yes_bid / 100;
-    } else if (Array.isArray(orderbook.yes)) {
-      // Legacy format
-      const sorted = [...orderbook.yes].sort((a, b) => a[0] - b[0]);
-      if (sorted.length >= 2) {
-        yesBid = sorted[0][0] / 100;
-        yesAsk = sorted[sorted.length - 1][0] / 100;
+      if (Array.isArray(data.yes_dollars_fp)) {
+        for (const [price, qty] of data.yes_dollars_fp) {
+          const q = parseFloat(qty);
+          if (q > 0) this._yesBook.set(price, q);
+        }
       }
+      if (Array.isArray(data.no_dollars_fp)) {
+        for (const [price, qty] of data.no_dollars_fp) {
+          const q = parseFloat(qty);
+          if (q > 0) this._noBook.set(price, q);
+        }
+      }
+    } else if (type === 'orderbook_delta') {
+      // Apply delta to the relevant book.
+      // side: "yes" → YES book, side: "no" → NO book
+      const price = data.price_dollars;
+      const delta = parseFloat(data.delta_fp ?? '0');
+      const book  = data.side === 'yes' ? this._yesBook : this._noBook;
+
+      if (price != null) {
+        const current = book.get(price) ?? 0;
+        const updated = current + delta;
+        if (updated <= 0) book.delete(price);
+        else              book.set(price, updated);
+      }
+    } else {
+      // Not a price message we care about
+      return;
     }
 
+    // Compute best bid/ask from current orderbook state
+    const { yesAsk, yesBid } = this._bestPrices();
     if (yesAsk !== null && yesBid !== null) {
-      this.onPrice(yesAsk, yesBid, market || this.ticker);
+      this.onPrice(yesAsk, yesBid, data.market_ticker || this.ticker);
     }
+  }
+
+  /**
+   * Compute best YES bid and best YES ask.
+   *
+   * Best YES bid  = highest price in yesBook (buyers paying the most for YES)
+   * Best YES ask  = 1 - highest price in noBook
+   *                 (sellers of YES = buyers of NO; best NO bid implies best YES ask)
+   */
+  _bestPrices() {
+    let bestYesBid = -Infinity;
+    for (const price of this._yesBook.keys()) {
+      const p = parseFloat(price);
+      if (p > bestYesBid) bestYesBid = p;
+    }
+
+    let bestNoBid = -Infinity;
+    for (const price of this._noBook.keys()) {
+      const p = parseFloat(price);
+      if (p > bestNoBid) bestNoBid = p;
+    }
+
+    // Need at least the YES book to compute a price
+    if (bestYesBid === -Infinity) return { yesAsk: null, yesBid: null };
+
+    const yesBid = bestYesBid;
+    let yesAsk;
+
+    if (bestNoBid !== -Infinity) {
+      // Normal case: derive ask from best NO bid
+      yesAsk = 1 - bestNoBid;
+    } else {
+      // NO book is empty (thin market / extreme probability).
+      // Estimate ask = best YES bid + 1¢ minimum spread.
+      yesAsk = Math.min(0.99, bestYesBid + 0.01);
+    }
+
+    // Sanity check
+    if (yesBid <= 0 || yesBid >= 1 || yesAsk <= 0 || yesAsk >= 1 || yesAsk < yesBid) {
+      return { yesAsk: null, yesBid: null };
+    }
+
+    return { yesAsk, yesBid };
   }
 
   // Call this when the 15-minute window rolls and a new ticker is active
   switchTicker(newTicker) {
     this.ticker = newTicker;
+    this._yesBook.clear();
+    this._noBook.clear();
     if (this.ws?.readyState === WebSocket.OPEN) {
       this._subscribe(newTicker);
     } else {

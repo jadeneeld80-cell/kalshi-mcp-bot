@@ -57,7 +57,8 @@ export async function checkExit(ctx) {
   }
 
   // 3. Velocity reversal — YES moving hard against our bet for 3 ticks + have some profit locked
-  if (!exitReason && yesVelHistory.length >= 3 && pctCaptured > 0.05) {
+  // Fix 7: Lower pctCaptured threshold 5%→2% — exit earlier on reversals
+  if (!exitReason && yesVelHistory.length >= 3 && pctCaptured > 0.02) {
     const recent = yesVelHistory.slice(-3);
     const avgVel = recent.reduce((a, b) => a + b) / recent.length;
     const against = trade.bet === 'UP' ? avgVel < -0.08 : avgVel > 0.08;
@@ -77,8 +78,10 @@ export async function checkExit(ctx) {
   }
 
   // 5. Time floor — exit at progressively lower capture thresholds as time runs out
+  // Fix 5: Add aggressive 45s tier — always exit with any profit in final 45s
   if (!exitReason) {
     if (
+      (secsLeft <= 45  && unrealizedPnL > 0)       ||
       (secsLeft <= 90  && unrealizedPnL > 0)       ||
       (secsLeft <= 180 && pctCaptured >= 0.10)      ||
       (secsLeft <= 360 && pctCaptured >= 0.25)      ||

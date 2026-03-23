@@ -1,7 +1,7 @@
 import { buildFeatures, buildFeaturesNorm } from '../nn/features.js';
 import { predict } from '../nn/network.js';
 import { executeBuy } from '../kalshi/orders.js';
-import { checkRiskGuards } from './riskManager.js';
+import { checkRiskGuards, RISK_COOLDOWN_FAST_MS } from './riskManager.js';
 import { priceFeed } from '../prices/binance.js';
 
 const FARM_REENTRY_WAIT_MS = 8_000;
@@ -55,7 +55,10 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   if (secsLeft < FARM_MIN_TIME_LEFT && !(secsLeft >= 60 && secsLeft <= 180)) {
     return { shouldFarm: false, reason: 'TOO_LATE' };
   }
-  if (yesPrice <= 0.03 || yesPrice >= 0.97) return { shouldFarm: false, reason: 'SPREAD_EXTREME' };
+  // Fix 2: Raise SPREAD_EXTREME floor to 5¢ (3¢ upside is not worth the risk)
+  if (yesPrice <= 0.05 || yesPrice >= 0.95) return { shouldFarm: false, reason: 'SPREAD_EXTREME' };
+  // Fix 2: Dead zone gate — 44–56¢ is coin-flip territory, no edge
+  if (yesPrice >= 0.44 && yesPrice <= 0.56) return { shouldFarm: false, reason: 'DEAD_ZONE' };
   if (liquidity === 'LOW')                   return { shouldFarm: false, reason: 'LOW_LIQ' };
 
   // ── Mode 1: TIME DECAY (60–180s left) ────────────────────────────────────
@@ -70,15 +73,16 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   }
 
   // ── Mode 2: REVERSAL ─────────────────────────────────────────────────────
+  // Fix 4: Symmetrize thresholds — prior ≥ 0.12 / recent ≤ -0.12 (was -0.06, too easy)
   if (yesPrice >= 0.15 && yesPrice <= 0.85 && yesVelHistory.length >= 4) {
     const prior  = yesVelHistory.slice(-4, -2);
     const recent = yesVelHistory.slice(-2);
     const priorAvg  = prior.reduce((a, b) => a + b) / prior.length;
     const recentAvg = recent.reduce((a, b) => a + b) / recent.length;
-    if (priorAvg <= -0.12 && recentAvg >= 0.06) {
+    if (priorAvg <= -0.12 && recentAvg >= 0.12) {
       return { shouldFarm: true, bet: 'UP',   target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'REVERSAL' };
     }
-    if (priorAvg >= 0.12 && recentAvg <= -0.06) {
+    if (priorAvg >= 0.12 && recentAvg <= -0.12) {
       return { shouldFarm: true, bet: 'DOWN', target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'REVERSAL' };
     }
   }
@@ -97,7 +101,8 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   }
 
   // ── Mode 5: ALIGNED ───────────────────────────────────────────────────────
-  if (Math.abs(cycleDelta) >= 0.02 && Math.abs(yesVel) >= 0.05) {
+  // Fix 6: Raise cycleDelta threshold 0.02→0.10 to filter noise entries
+  if (Math.abs(cycleDelta) >= 0.10 && Math.abs(yesVel) >= 0.05) {
     if ((cycleDelta > 0) === (yesVel > 0)) {
       const bet = cycleDelta > 0 ? 'UP' : 'DOWN';
       return { shouldFarm: true, bet, target: TARGET[regime], stop: STOP[regime] * 0.8 * stopMult, mode: 'ALIGNED' };
@@ -106,7 +111,8 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   }
 
   // ── Mode 6: MOMENTUM ──────────────────────────────────────────────────────
-  if (yesPrice >= 0.30 && yesPrice <= 0.70 && Math.abs(yesVel) >= 0.08) {
+  // Fix 4: Only fire MOMENTUM with enough time to recover if wrong
+  if (yesPrice >= 0.30 && yesPrice <= 0.70 && Math.abs(yesVel) >= 0.08 && secsLeft > 400) {
     const bet = yesVel > 0 ? 'UP' : 'DOWN';
     return { shouldFarm: true, bet, target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'MOMENTUM' };
   }
@@ -122,27 +128,30 @@ export async function checkFarmBot(ctx) {
   if (now - s.lastExitTime < FARM_REENTRY_WAIT_MS) return;
   if (s.farmRounds >= FARM_MAX_ROUNDS) return;
 
-  const risk = checkRiskGuards(s, balance);
+  // Fast cooldown applies for high-confidence modes — evaluated after decision
+  const decision = evaluateModes(s, priceFeed.getRegime(asset) ?? 'NORMAL',
+    (s.windowOpenPrice && priceFeed.getPrice(asset))
+      ? (priceFeed.getPrice(asset) - s.windowOpenPrice) / s.windowOpenPrice * 100
+      : 0,
+    pctAbove
+  );
+  const fastCooldown = decision.shouldFarm &&
+    (decision.mode === 'DECAY' || decision.mode === 'STRONG_CONVICTION');
+  const risk = checkRiskGuards(s, balance, fastCooldown);
   if (risk.blocked) return;
 
   const features = buildFeatures(asset);
   if (!features) return; // price buffer not warm yet
 
-  const regime = priceFeed.getRegime(asset);
-  const currentPrice = priceFeed.getPrice(asset);
-  const cycleDelta = (s.windowOpenPrice && currentPrice)
-    ? (currentPrice - s.windowOpenPrice) / s.windowOpenPrice * 100
-    : 0;
-
-  const decision = evaluateModes(s, regime, cycleDelta, pctAbove);
   if (!decision.shouldFarm) return;
 
   const { bet, target, stop, mode } = decision;
 
   // Get model probability for this specific bet direction
   const featuresNorm = buildFeaturesNorm(features, bet);
-  let modelProb = 0.55; // conservative default when no brain data
-  if (s.brain && (bet === 'UP' ? s.brain.dataUp : s.brain.dataDown).length >= 4) {
+  // Fix 3: Lower default prob to 0.52 and require ≥10 samples per direction
+  let modelProb = 0.52;
+  if (s.brain && (bet === 'UP' ? s.brain.dataUp : s.brain.dataDown).length >= 10) {
     modelProb = predict(s.brain.weights, features, featuresNorm, bet, s.brain.dataUp, s.brain.dataDown);
   }
 

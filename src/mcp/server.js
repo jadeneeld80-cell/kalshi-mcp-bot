@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { state } from '../engine/state.js';
+import { persistBotState } from '../engine/botStateStore.js';
 import { executeBuy, executeSell, cancelOpenOrders } from '../kalshi/orders.js';
 import { getPositions, getFills } from '../kalshi/client.js';
 import { brainStats, importBrain, exportBrain } from '../nn/store.js';
@@ -11,7 +12,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TRADES_LOG = path.join(__dirname, '../../logs/trades.json');
+const TRADES_LOG  = path.join(__dirname, '../../logs/trades.json');
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -213,6 +214,7 @@ async function handleTool(name, args) {
       const s = state[args.asset];
       s.farmArmed = args.armed;
       if (args.armed) s.autoBuyArmed = false; // mutual exclusion
+      persistBotState();
       return ok(`Farm bot ${args.armed ? 'ARMED' : 'DISARMED'} for ${args.asset}`);
     }
 
@@ -220,6 +222,7 @@ async function handleTool(name, args) {
       const s = state[args.asset];
       s.autoBuyArmed = args.armed;
       if (args.armed) s.farmArmed = false;
+      persistBotState();
       return ok(`Auto-buy ${args.armed ? 'ARMED' : 'DISARMED'} for ${args.asset}`);
     }
 

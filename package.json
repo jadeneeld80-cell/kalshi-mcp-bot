@@ -7,8 +7,14 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "test": "node --experimental-test-module-mocks --test tests/unit/*.test.js",
+    "test:integration": "node --experimental-test-module-mocks --test tests/integration/*.test.js",
+    "test:agents": "node --experimental-test-module-mocks --test tests/agents/*.test.js",
+    "test:all": "node --experimental-test-module-mocks --test tests/unit/*.test.js tests/integration/*.test.js tests/agents/*.test.js",
     "test-auth": "node src/kalshi/test-auth.js",
-    "export-brain": "node src/nn/export-brain.js"
+    "export-brain": "node src/nn/export-brain.js",
+    "research": "node run-research.mjs",
+    "research:quick": "node run-research.mjs --quick"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

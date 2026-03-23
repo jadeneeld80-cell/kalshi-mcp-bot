@@ -1,0 +1,156 @@
+{
+  "runId": "quick_1774243558798",
+  "startedAt": "2026-03-23T05:25:58.798Z",
+  "cycles": [
+    {
+      "type": "simulation",
+      "at": "2026-03-23T05:25:58.798Z",
+      "snapshots": 500,
+      "tradeCount": 1,
+      "score": 0,
+      "pnl": -0.41969999999999996,
+      "paramChanges": 0
+    },
+    {
+      "type": "simulation",
+      "at": "2026-03-23T05:25:58.798Z",
+      "snapshots": 500,
+      "tradeCount": 1,
+      "score": 0,
+      "pnl": -0.41969999999999996,
+      "paramChanges": 0
+    },
+    {
+      "type": "simulation",
+      "at": "2026-03-23T05:25:58.798Z",
+      "snapshots": 500,
+      "tradeCount": 1,
+      "score": 0,
+      "pnl": -0.41969999999999996,
+      "paramChanges": 0
+    },
+    {
+      "type": "simulation",
+      "at": "2026-03-23T05:25:58.798Z",
+      "snapshots": 500,
+      "tradeCount": 1,
+      "score": 0,
+      "pnl": -0.41969999999999996,
+      "paramChanges": 0
+    },
+    {
+      "type": "simulation",
+      "at": "2026-03-23T05:25:58.798Z",
+      "snapshots": 500,
+      "tradeCount": 1,
+      "score": 0,
+      "pnl": -0.41969999999999996,
+      "paramChanges": 0
+    }
+  ],
+  "finalScore": 0,
+  "trades": [
+    {
+      "asset": "BTC",
+      "bet": "DOWN",
+      "mode": "CONVICTION",
+      "amount": 0.71,
+      "pnl": -0.41969999999999996,
+      "win": false,
+      "reason": "STOP_LOSS",
+      "at": "2026-03-23T05:01:01.789Z",
+      "secsLeft": 884,
+      "regime": "NORMAL",
+      "yesPrice": 0.6997,
+      "entryYes": 0.3,
+      "params": {
+        "SPREAD_EXTREME_FLOOR": 0.05,
+        "DEAD_ZONE_LOW": 0.44,
+        "DEAD_ZONE_HIGH": 0.56,
+        "REVERSAL_PRIOR_THRESHOLD": 0.12,
+        "REVERSAL_RECENT_THRESHOLD": 0.12,
+        "ALIGNED_CYCLE_DELTA_MIN": 0.1,
+        "MOMENTUM_SECS_MIN": 400,
+        "MODEL_PROB_DEFAULT": 0.52,
+        "MODEL_PROB_MIN_SAMPLES": 10,
+        "RISK_COOLDOWN_MS": 45000,
+        "RISK_COOLDOWN_FAST_MS": 20000,
+        "RISK_SESSION_KILL": 0.05,
+        "RISK_DAILY_CAP": 0.08,
+        "RISK_CONSEC_BRAKE": 3,
+        "VEL_REVERSAL_PCT_CAPTURED": 0.02,
+        "TAKE_PROFIT_PCT": 0.6,
+        "KELLY_MAX_FRACTION": 0.2,
+        "STOP_LOSS_CALM": 0.06,
+        "STOP_LOSS_NORMAL": 0.09,
+        "STOP_LOSS_CHOPPY": 0.12,
+        "LIQUIDITY_HIGH_SPREAD": 0.03,
+        "LIQUIDITY_MED_SPREAD": 0.06,
+        "TARGET_CALM": 0.12,
+        "TARGET_NORMAL": 0.18,
+        "TARGET_CHOPPY": 0.25,
+        "STOP_CALM": 0.06,
+        "STOP_NORMAL": 0.09,
+        "STOP_CHOPPY": 0.12
+      }
+    }
+  ],
+  "paramHistory": [
+    {
+      "round": 1,
+      "score": 0,
+      "changes": []
+    },
+    {
+      "round": 2,
+      "score": 0,
+      "changes": []
+    },
+    {
+      "round": 3,
+      "score": 0,
+      "changes": []
+    },
+    {
+      "round": 4,
+      "score": 0,
+      "changes": []
+    },
+    {
+      "round": 5,
+      "score": 0,
+      "changes": []
+    }
+  ],
+  "questionScores": [],
+  "params": {
+    "SPREAD_EXTREME_FLOOR": 0.05,
+    "DEAD_ZONE_LOW": 0.44,
+    "DEAD_ZONE_HIGH": 0.56,
+    "REVERSAL_PRIOR_THRESHOLD": 0.12,
+    "REVERSAL_RECENT_THRESHOLD": 0.12,
+    "ALIGNED_CYCLE_DELTA_MIN": 0.1,
+    "MOMENTUM_SECS_MIN": 400,
+    "MODEL_PROB_DEFAULT": 0.52,
+    "MODEL_PROB_MIN_SAMPLES": 10,
+    "RISK_COOLDOWN_MS": 45000,
+    "RISK_COOLDOWN_FAST_MS": 20000,
+    "RISK_SESSION_KILL": 0.05,
+    "RISK_DAILY_CAP": 0.08,
+    "RISK_CONSEC_BRAKE": 3,
+    "VEL_REVERSAL_PCT_CAPTURED": 0.02,
+    "TAKE_PROFIT_PCT": 0.6,
+    "KELLY_MAX_FRACTION": 0.2,
+    "STOP_LOSS_CALM": 0.06,
+    "STOP_LOSS_NORMAL": 0.09,
+    "STOP_LOSS_CHOPPY": 0.12,
+    "LIQUIDITY_HIGH_SPREAD": 0.03,
+    "LIQUIDITY_MED_SPREAD": 0.06,
+    "TARGET_CALM": 0.12,
+    "TARGET_NORMAL": 0.18,
+    "TARGET_CHOPPY": 0.25,
+    "STOP_CALM": 0.06,
+    "STOP_NORMAL": 0.09,
+    "STOP_CHOPPY": 0.12
+  }
+}
