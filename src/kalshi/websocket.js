@@ -12,6 +12,7 @@ export class KalshiWebSocket {
     this.reconnectTimer = null;
     this.intentionalClose = false;
     this.cmdSeq = 1;
+    this._sid = null;  // subscription ID returned by server — needed for unsubscribe
 
     // In-memory orderbook: price (as string) → quantity (as float)
     // yesBook: bids for YES contracts
@@ -33,15 +34,22 @@ export class KalshiWebSocket {
       this.ws.close();
     }
 
-    // Reset orderbook on reconnect
+    // Reset orderbook and subscription state on reconnect
     this._yesBook.clear();
     this._noBook.clear();
+    this._sid = null;
 
     const headers = buildHeaders('GET', '/trade-api/ws/v2');
     this.ws = new WebSocket(WS_URL, { headers });
 
     this.ws.on('open', () => {
       this._subscribe(this.ticker);
+    });
+
+    // Kalshi sends Ping frames (0x9) every 10s with body "heartbeat".
+    // Must respond with Pong or the server closes the connection.
+    this.ws.on('ping', () => {
+      this.ws.pong();
     });
 
     this.ws.on('message', (data) => {
@@ -71,8 +79,24 @@ export class KalshiWebSocket {
     this.ws.send(JSON.stringify(msg));
   }
 
+  _unsubscribe(sid) {
+    const msg = {
+      id: this.cmdSeq++,
+      cmd: 'unsubscribe',
+      params: { sids: [sid] },
+    };
+    this.ws.send(JSON.stringify(msg));
+  }
+
   _handleMessage(msg) {
     const type = msg?.type;
+
+    // Capture subscription ID from server ack — needed for clean unsubscribe on ticker switch
+    if (type === 'subscribed') {
+      this._sid = msg.msg?.sid ?? null;
+      return;
+    }
+
     const data = msg?.msg;
     if (!data) return;
 
@@ -163,12 +187,17 @@ export class KalshiWebSocket {
     return { yesAsk, yesBid };
   }
 
-  // Call this when the 15-minute window rolls and a new ticker is active
+  // Call this when the 15-minute window rolls and a new ticker is active.
+  // Unsubscribes from the old ticker first to avoid duplicate orderbook feeds.
   switchTicker(newTicker) {
     this.ticker = newTicker;
     this._yesBook.clear();
     this._noBook.clear();
     if (this.ws?.readyState === WebSocket.OPEN) {
+      if (this._sid !== null) {
+        this._unsubscribe(this._sid);
+        this._sid = null;
+      }
       this._subscribe(newTicker);
     } else {
       this._open();

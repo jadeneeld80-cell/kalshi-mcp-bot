@@ -72,7 +72,13 @@ export async function recordTrade(asset, brain, featuresNorm, featuresRaw, bet, 
 
 // Import a brain from exported JSON (e.g. from the browser app)
 export function importBrain(asset, json) {
-  const raw = typeof json === 'string' ? JSON.parse(json) : json;
+  const raw = typeof json === 'string' ? JSON.parse(json) : json; // throws SyntaxError on bad JSON
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid brain JSON: expected an object');
+  }
+  if (!raw.weights || !raw.weights.w1 || !raw.weights.b1 || !raw.weights.w2 || !raw.weights.b2) {
+    throw new Error('Invalid brain JSON: missing required weights fields (w1, b1, w2, b2)');
+  }
   const p = brainPath(asset);
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(p, JSON.stringify({ ...raw, at: new Date().toISOString() }), 'utf8');

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kalshi AutoResearch Report — run_1774276399117</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }
+  h1  { font-size: 1.8rem; margin-bottom: 4px; color: #f8fafc; }
+  .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: #1e293b; border-radius: 12px; padding: 20px; }
+  .card h3 { font-size: 0.8rem; text-transform: uppercase; color: #64748b; margin-bottom: 8px; }
+  .card .big { font-size: 2rem; font-weight: 700; }
+  .green { color: #22c55e; }
+  .red   { color: #ef4444; }
+  .yellow { color: #eab308; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-card { background: #1e293b; border-radius: 12px; padding: 20px; }
+  .chart-card h3 { font-size: 0.9rem; color: #94a3b8; margin-bottom: 16px; }
+  .full { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
+  th { background: #0f172a; color: #64748b; font-size: 0.75rem; text-transform: uppercase; padding: 10px 14px; text-align: left; }
+  td { padding: 10px 14px; border-top: 1px solid #334155; font-size: 0.85rem; }
+  tr:hover td { background: #263148; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; }
+  .badge-green { background: #14532d; color: #22c55e; }
+  .badge-red   { background: #7f1d1d; color: #ef4444; }
+  @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Kalshi AutoResearch Report</h1>
+<p class="sub">Run: run_1774276399117 &nbsp;|&nbsp; 2026-03-23T14:33:19.116Z &nbsp;|&nbsp; 36 optimization cycles</p>
+
+<div class="grid">
+  <div class="card">
+    <h3>Final Score</h3>
+    <div class="big yellow">61.1%</div>
+  </div>
+  <div class="card">
+    <h3>Total Trades</h3>
+    <div class="big">200</div>
+  </div>
+  <div class="card">
+    <h3>Win Rate</h3>
+    <div class="big red">22.0%</div>
+  </div>
+  <div class="card">
+    <h3>Net PnL</h3>
+    <div class="big red">$-2.96</div>
+  </div>
+</div>
+
+<div class="charts">
+  <div class="chart-card">
+    <h3>Score Over Optimization Cycles</h3>
+    <canvas id="scoreChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Cumulative PnL per Cycle</h3>
+    <canvas id="pnlChart"></canvas>
+  </div>
+  <div class="chart-card full">
+    <h3>Evaluation Questions Score (18 Questions)</h3>
+    <canvas id="qChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Win Rate by Farm Mode</h3>
+    <canvas id="modeChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Trades per Cycle</h3>
+    <canvas id="tradeChart"></canvas>
+  </div>
+</div>
+
+<div style="margin-bottom:24px">
+  <h2 style="margin-bottom:12px; font-size:1.1rem; color:#94a3b8">Evaluation Questions</h2>
+  <table>
+    <thead><tr><th>#</th><th>Question</th><th>Score</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>
+      
+        <tr>
+          <td>1</td>
+          <td>Entry precision — dead zone / spread avoidance</td>
+          <td>98.4%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">1/63 entries in dead zone or spread extreme</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>Stop loss — no catastrophic losses (>25% of stake)</td>
+          <td>98.4%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">1 trades exceeded 25% stop threshold</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>Win rate (20.6% of 63 trades)</td>
+          <td>41.3%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b">13 wins, 50 losses</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>Profit factor (0.37)</td>
+          <td>24.8%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b">Gains $0.59, Losses $1.58</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>Risk/reward ratio (1.37)</td>
+          <td>91.5%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">Avg win $0.05, avg loss $0.03</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>Kelly bet calibration (no oversized losses)</td>
+          <td>100.0%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">0/63 trades had loss > 150% of stake</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>Regime adaptation (CALM=22% NORMAL=0% CHOPPY=50%)</td>
+          <td>0.0%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b">60 calm, 3 normal, 0 choppy trades</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td>DECAY mode win rate (55.6% of 9 trades)</td>
+          <td>85.5%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">Need >= 65% for full score</td>
+        </tr>
+        <tr>
+          <td>9</td>
+          <td>REVERSAL mode accuracy</td>
+          <td>50.0%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">No REVERSAL trades</td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td>MOMENTUM mode edge</td>
+          <td>50.0%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">No MOMENTUM trades</td>
+        </tr>
+        <tr>
+          <td>11</td>
+          <td>Liquidity filtering (LOW_LIQ blocked)</td>
+          <td>100.0%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">Simulator blocks LOW liquidity entries by design</td>
+        </tr>
+        <tr>
+          <td>12</td>
+          <td>VEL_REVERSAL exits with profit (3/3)</td>
+          <td>100.0%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">Should mostly exit in green</td>
+        </tr>
+        <tr>
+          <td>13</td>
+          <td>TRAIL_STOP profitable exits (1/4)</td>
+          <td>25.0%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b"></td>
+        </tr>
+        <tr>
+          <td>14</td>
+          <td>TIME_FLOOR profitable exits (9/9)</td>
+          <td>100.0%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">Time floor should lock in wins before expiry</td>
+        </tr>
+        <tr>
+          <td>15</td>
+          <td>Session risk / max loss streak (11 consecutive losses)</td>
+          <td>0.0%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b">Max consecutive loss streak: 11</td>
+        </tr>
+        <tr>
+          <td>16</td>
+          <td>Cooldown respect (post-loss loss rate: 84% vs base 79%)</td>
+          <td>87.1%</td>
+          <td><span class="badge badge-green">PASS</span></td>
+          <td style="color:#64748b">41/49 post-loss entries also lost</td>
+        </tr>
+        <tr>
+          <td>17</td>
+          <td>Brain learning (early WR 25.8% → late WR 15.6%)</td>
+          <td>0.0%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b">Improvement: -10.2%</td>
+        </tr>
+        <tr>
+          <td>18</td>
+          <td>Overall PnL ($-1.00 across 63 trades)</td>
+          <td>42.1%</td>
+          <td><span class="badge badge-red">FAIL</span></td>
+          <td style="color:#64748b">Avg per trade: $-0.016</td>
+        </tr>
+    </tbody>
+  </table>
+</div>
+
+
+
+<script>
+const scoreData = [{"x":1,"y":55.6},{"x":2,"y":55.6},{"x":3,"y":55.6},{"x":4,"y":55.6},{"x":5,"y":55.6},{"x":6,"y":55.6},{"x":7,"y":55.6},{"x":8,"y":55.6},{"x":9,"y":55.6},{"x":10,"y":55.6},{"x":11,"y":55.6},{"x":12,"y":55.6},{"x":13,"y":55.6},{"x":14,"y":55.6},{"x":15,"y":55.6},{"x":16,"y":55.6},{"x":17,"y":55.6},{"x":18,"y":55.6},{"x":19,"y":55.6},{"x":20,"y":55.6},{"x":21,"y":55.6},{"x":22,"y":55.6},{"x":23,"y":55.6},{"x":24,"y":0},{"x":25,"y":0},{"x":26,"y":77.8},{"x":27,"y":77.8},{"x":28,"y":77.8},{"x":29,"y":77.8},{"x":30,"y":77.8},{"x":31,"y":77.8},{"x":32,"y":77.8},{"x":33,"y":77.8},{"x":34,"y":61.1},{"x":35,"y":61.1},{"x":36,"y":61.1}];
+const pnlData   = [{"x":1,"y":-0.7},{"x":2,"y":-0.7},{"x":3,"y":-0.7},{"x":4,"y":-0.7},{"x":5,"y":-0.7},{"x":6,"y":-0.7},{"x":7,"y":-0.7},{"x":8,"y":-0.7},{"x":9,"y":-0.7},{"x":10,"y":-0.7},{"x":11,"y":-0.7},{"x":12,"y":-0.7},{"x":13,"y":-0.7},{"x":14,"y":-0.7},{"x":15,"y":-0.7},{"x":16,"y":-0.7},{"x":17,"y":-0.7},{"x":18,"y":-0.7},{"x":19,"y":-0.7},{"x":20,"y":-0.7},{"x":21,"y":-0.7},{"x":22,"y":-0.76},{"x":23,"y":-0.76},{"x":24,"y":0},{"x":25,"y":0},{"x":26,"y":-0.326},{"x":27,"y":-0.326},{"x":28,"y":-0.326},{"x":29,"y":-0.326},{"x":30,"y":-0.296},{"x":31,"y":-0.296},{"x":32,"y":-0.346},{"x":33,"y":-0.346},{"x":34,"y":-0.995},{"x":35,"y":-0.995},{"x":36,"y":-0.995}];
+const tradeData = [{"x":1,"y":24},{"x":2,"y":24},{"x":3,"y":24},{"x":4,"y":24},{"x":5,"y":24},{"x":6,"y":24},{"x":7,"y":24},{"x":8,"y":24},{"x":9,"y":24},{"x":10,"y":24},{"x":11,"y":24},{"x":12,"y":24},{"x":13,"y":24},{"x":14,"y":24},{"x":15,"y":24},{"x":16,"y":24},{"x":17,"y":24},{"x":18,"y":24},{"x":19,"y":24},{"x":20,"y":24},{"x":21,"y":24},{"x":22,"y":18},{"x":23,"y":18},{"x":24,"y":0},{"x":25,"y":0},{"x":26,"y":23},{"x":27,"y":23},{"x":28,"y":23},{"x":29,"y":23},{"x":30,"y":26},{"x":31,"y":26},{"x":32,"y":28},{"x":33,"y":28},{"x":34,"y":63},{"x":35,"y":63},{"x":36,"y":63}];
+const qLabels   = ["Q1","Q2","Q3","Q4","Q5","Q6","Q7","Q8","Q9","Q10","Q11","Q12","Q13","Q14","Q15","Q16","Q17","Q18"];
+const qScores   = [98.4,98.4,41.3,24.8,91.5,100,0,85.5,50,50,100,100,25,100,0,87.1,0,42.1];
+const qColors   = ["#22c55e","#22c55e","#ef4444","#ef4444","#22c55e","#22c55e","#ef4444","#22c55e","#22c55e","#22c55e","#22c55e","#22c55e","#ef4444","#22c55e","#ef4444","#22c55e","#ef4444","#ef4444"];
+const modeLabels = ["CONVICTION","DECAY","STRONG_CONVICTION"];
+const modeWR     = [23,56.3,7.4];
+
+const chartDefaults = {
+  responsive: true,
+  plugins: { legend: { labels: { color: '#94a3b8' } } },
+  scales: {
+    x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+    y: { ticks: { color: '#64748b' }, grid: { color: '#334155' } },
+  },
+};
+
+new Chart(document.getElementById('scoreChart'), {
+  type: 'line',
+  data: { datasets: [{ label: 'Score %', data: scoreData, borderColor: '#6366f1', tension: 0.3, fill: false }] },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, max: 100 } } },
+});
+
+new Chart(document.getElementById('pnlChart'), {
+  type: 'line',
+  data: { datasets: [{ label: 'Cycle PnL $', data: pnlData, borderColor: '#22c55e', tension: 0.3, fill: true, backgroundColor: 'rgba(34,197,94,0.1)' }] },
+  options: chartDefaults,
+});
+
+new Chart(document.getElementById('qChart'), {
+  type: 'bar',
+  data: {
+    labels: qLabels,
+    datasets: [{ label: 'Score %', data: qScores, backgroundColor: qColors }],
+  },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, max: 100 } } },
+});
+
+new Chart(document.getElementById('modeChart'), {
+  type: 'bar',
+  data: {
+    labels: modeLabels,
+    datasets: [{ label: 'Win Rate %', data: modeWR, backgroundColor: '#6366f1' }],
+  },
+  options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, max: 100 } } },
+});
+
+new Chart(document.getElementById('tradeChart'), {
+  type: 'bar',
+  data: { datasets: [{ label: 'Trades', data: tradeData, backgroundColor: '#0ea5e9' }] },
+  options: chartDefaults,
+});
+</script>
+</body>
+</html>

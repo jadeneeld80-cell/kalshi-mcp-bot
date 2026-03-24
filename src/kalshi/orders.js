@@ -4,6 +4,9 @@ import { placeOrder, cancelOrder, getOrders } from './client.js';
 // DOWN bet → buy NO side  → count = floor(amount / (1 - bid_yes_price))
 // Getting this wrong makes DOWN P&L show ~$0.00 (was 16x too small before fix)
 export function buildBuyBody(ticker, bet, amount, yesAsk, yesBid) {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`Invalid amount: ${amount} — must be a positive finite number`);
+  }
   const isUp = bet === 'UP';
   const sidePrice = isUp ? yesAsk : (1 - yesBid);
   const count = Math.floor(amount / sidePrice);
@@ -15,7 +18,6 @@ export function buildBuyBody(ticker, bet, amount, yesAsk, yesBid) {
     client_order_id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     side: isUp ? 'yes' : 'no',
     action: 'buy',
-    type: 'limit',                          // REQUIRED — Kalshi rejects without this
     count,
     time_in_force: 'fill_or_kill',          // gtc not supported on 15M crypto markets
     buy_max_cost: Math.round(amount * 100), // cents, integer
@@ -40,7 +42,6 @@ export function buildSellBody(ticker, side, contractsHeld) {
     client_order_id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     side,
     action: 'sell',
-    type: 'limit',
     count,
     time_in_force: 'fill_or_kill',
   };

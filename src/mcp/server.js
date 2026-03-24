@@ -235,8 +235,8 @@ async function handleTool(name, args) {
       let logs = [];
       try { logs = JSON.parse(fs.readFileSync(TRADES_LOG, 'utf8')); } catch {}
       if (args.asset) logs = logs.filter(t => t.asset === args.asset);
-      const limit = args.limit ?? 20;
-      return ok(logs.slice(-limit));
+      const limit = Math.max(0, Math.floor(args.limit ?? 20));
+      return ok(logs.slice(Math.max(0, logs.length - limit)));
     }
 
     case 'get_brain_stats': {
@@ -277,6 +277,9 @@ async function handleTool(name, args) {
     }
 
     case 'set_balance': {
+      if (!Number.isFinite(args.amount) || args.amount < 0) {
+        return err(`Invalid amount: balance cannot be negative (got ${args.amount})`);
+      }
       state.balance = args.amount;
       return ok(`Balance set to $${args.amount.toFixed(2)}`);
     }
@@ -298,7 +301,8 @@ async function handleTool(name, args) {
     case 'get_logs': {
       let logs = [];
       try { logs = JSON.parse(fs.readFileSync(TRADES_LOG, 'utf8')); } catch {}
-      return ok(logs.slice(-(args.limit ?? 20)));
+      const limit = Math.max(0, Math.floor(args.limit ?? 20));
+      return ok(logs.slice(Math.max(0, logs.length - limit)));
     }
 
     case 'reset_risk': {

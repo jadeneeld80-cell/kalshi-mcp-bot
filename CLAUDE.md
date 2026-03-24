@@ -116,7 +116,6 @@ pem.replace(/\\n/g, '\n').replace(/\r\n/g, '\n')
   client_order_id: Date.now().toString(36) + Math.random().toString(36).slice(2,7),
   side: 'yes' | 'no',                 // UP→'yes', DOWN→'no'
   action: 'buy',
-  type: 'limit',                       // REQUIRED — Kalshi rejects without this
   count: Math.floor(amount / sidePrice), // contracts = budget / side price
   time_in_force: 'fill_or_kill',
   buy_max_cost: Math.round(amount * 100), // cents, integer
@@ -138,7 +137,6 @@ Getting this wrong makes DOWN bet P&L show ~$0.00 (was 16× too small before fix
   ticker, client_order_id,
   side: kalshiOrderSide,   // same side as bought
   action: 'sell',
-  type: 'limit',
   count: Math.floor(contractsHeld),
   time_in_force: 'fill_or_kill',
   yes_price_dollars: '0.0100',  // OR no_price_dollars — minimum acceptable sell price
@@ -376,8 +374,7 @@ ETH is one tier lower than BTC outside US open hours.
 
 1. **Never skip the RSA-PSS signing** — every Kalshi request must be signed
 2. **Contract count for DOWN bets uses NO price** = `amount / (1 - yes_bid)` — not YES price
-3. **Order requires `type: 'limit'`** — Kalshi rejects without it
-4. **Price fields must be strings with 4 decimals** — `'0.9900'` not `0.99`
+3. **Price fields must be strings with 4 decimals** — `'0.9900'` not `0.99`
 5. **`fill_or_kill` only** — `gtc` is not supported on 15M crypto markets
 6. **Cancel open order before selling position** — prevents buying more while trying to exit
 7. **Session kill and daily cap guards require balance > $5** — prevents false triggers on empty accounts
@@ -395,7 +392,6 @@ ETH is one tier lower than BTC outside US open hours.
 |---|---|---|
 | All trades are sim | `authConnected=false` or `kalshiYESPrice=null` at trade time | Check both before placing |
 | DOWN bets show +$0.00 P&L | contracts = amount/YES price instead of amount/NO price | Use `bet === 'DOWN' ? 1-yesPrice : yesPrice` |
-| "invalid order parameter" | Missing `type: 'limit'` field | Always include it |
 | "invalid parameters TimeInForce" | Sent `gtc` instead of `fill_or_kill` | Always `fill_or_kill` |
 | 0 contracts filled silently | `fill_or_kill` + price below market | Use `'0.9900'` as generous limit |
 | Bot never fires | `sm.conf` or `sm.prob` used instead of `sm.aboveProb`/`sm.belowProb` | `computeStrikeModel` returns `aboveProb`/`belowProb` only |

@@ -5,7 +5,7 @@ import { checkRiskGuards, RISK_COOLDOWN_FAST_MS } from './riskManager.js';
 import { priceFeed } from '../prices/binance.js';
 
 const FARM_REENTRY_WAIT_MS = 8_000;
-const FARM_MIN_TIME_LEFT   = 240;
+const FARM_MIN_TIME_LEFT   = 200; // lowered from 240 — closes the 181-240s dead band
 const FARM_MAX_ROUNDS      = 99;
 const KALSHI_MIN_BET       = 0.05;
 const MAX_BET_FRACTION     = 0.20;  // never more than 20% of balance
@@ -23,7 +23,11 @@ function kellyBet(bet, yesAsk, yesBid, modelProb, balance) {
     : yesBid / (1 - yesBid);         // NO decimal odds
   const kelly = (b * p - q) / b;
   const halfKelly = Math.max(0, kelly * 0.5);
-  return Math.max(Math.min(halfKelly * balance, MAX_BET_FRACTION * balance), KALSHI_MIN_BET);
+  // Minimum must be enough to buy at least 1 contract — otherwise buildBuyBody
+  // throws "Budget too low" and the trade silently fails every tick.
+  const sidePrice = bet === 'UP' ? yesAsk : (1 - yesBid);
+  const minBet = Math.max(KALSHI_MIN_BET, sidePrice);
+  return Math.max(Math.min(halfKelly * balance, MAX_BET_FRACTION * balance), minBet);
 }
 
 // Evaluate all 6 farm modes + 3 gates.
@@ -40,8 +44,8 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
     }
   }
 
-  // ── Gate B: EMA/momentum conflict (68% confidence) ───────────────────────
-  if (Math.abs(cycleDelta) > 0.2 && Math.abs(yesVel) > 0.3) {
+  // ── Gate B: EMA/momentum conflict — raised thresholds (68% confidence, too many false blocks)
+  if (Math.abs(cycleDelta) > 0.4 && Math.abs(yesVel) > 0.5) {
     if ((cycleDelta > 0) !== (yesVel > 0)) {
       return { shouldFarm: false, reason: 'GATE_B' };
     }
@@ -55,13 +59,14 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   if (secsLeft < FARM_MIN_TIME_LEFT && !(secsLeft >= 60 && secsLeft <= 180)) {
     return { shouldFarm: false, reason: 'TOO_LATE' };
   }
-  // Fix 2: Raise SPREAD_EXTREME floor to 5¢ (3¢ upside is not worth the risk)
   if (yesPrice <= 0.05 || yesPrice >= 0.95) return { shouldFarm: false, reason: 'SPREAD_EXTREME' };
-  // Fix 2: Dead zone gate — 44–56¢ is coin-flip territory, no edge
-  if (yesPrice >= 0.44 && yesPrice <= 0.56) return { shouldFarm: false, reason: 'DEAD_ZONE' };
+  // Narrow dead zone to only the true coin-flip centre — 49–51¢
+  if (yesPrice >= 0.49 && yesPrice <= 0.51) return { shouldFarm: false, reason: 'DEAD_ZONE' };
   if (liquidity === 'LOW')                   return { shouldFarm: false, reason: 'LOW_LIQ' };
 
   // ── Mode 1: TIME DECAY (60–180s left) ────────────────────────────────────
+  // When pctAbove confirms the direction, fire DECAY.
+  // When it doesn't, fall through to other modes (STRONG_CONVICTION fires at 80–95¢).
   if (secsLeft >= 60 && secsLeft <= 180) {
     if (yesPrice >= 0.80 && pctAbove >= 0.65) {
       return { shouldFarm: true, bet: 'UP',   target: 0.04, stop: 0.02 * stopMult, mode: 'DECAY' };
@@ -69,7 +74,7 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
     if (yesPrice <= 0.20 && pctAbove <= 0.35) {
       return { shouldFarm: true, bet: 'DOWN', target: 0.04, stop: 0.02 * stopMult, mode: 'DECAY' };
     }
-    return { shouldFarm: false, reason: 'DECAY_NO_SIGNAL' };
+    // No pctAbove confirmation — fall through to STRONG_CONVICTION / CONVICTION
   }
 
   // ── Mode 2: REVERSAL ─────────────────────────────────────────────────────
@@ -101,8 +106,8 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   }
 
   // ── Mode 5: ALIGNED ───────────────────────────────────────────────────────
-  // Fix 6: Raise cycleDelta threshold 0.02→0.10 to filter noise entries
-  if (Math.abs(cycleDelta) >= 0.10 && Math.abs(yesVel) >= 0.05) {
+  // Lowered cycleDelta threshold 0.10→0.04 to allow more entries
+  if (Math.abs(cycleDelta) >= 0.04 && Math.abs(yesVel) >= 0.03) {
     if ((cycleDelta > 0) === (yesVel > 0)) {
       const bet = cycleDelta > 0 ? 'UP' : 'DOWN';
       return { shouldFarm: true, bet, target: TARGET[regime], stop: STOP[regime] * 0.8 * stopMult, mode: 'ALIGNED' };
@@ -111,8 +116,8 @@ function evaluateModes(s, regime, cycleDelta, pctAbove) {
   }
 
   // ── Mode 6: MOMENTUM ──────────────────────────────────────────────────────
-  // Fix 4: Only fire MOMENTUM with enough time to recover if wrong
-  if (yesPrice >= 0.30 && yesPrice <= 0.70 && Math.abs(yesVel) >= 0.08 && secsLeft > 400) {
+  // Lowered yesVel 0.08→0.04 and secsLeft 400→240 to allow more entries
+  if (yesPrice >= 0.30 && yesPrice <= 0.70 && Math.abs(yesVel) >= 0.04 && secsLeft > 240) {
     const bet = yesVel > 0 ? 'UP' : 'DOWN';
     return { shouldFarm: true, bet, target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'MOMENTUM' };
   }
@@ -138,12 +143,15 @@ export async function checkFarmBot(ctx) {
   const fastCooldown = decision.shouldFarm &&
     (decision.mode === 'DECAY' || decision.mode === 'STRONG_CONVICTION');
   const risk = checkRiskGuards(s, balance, fastCooldown);
-  if (risk.blocked) return;
+  if (risk.blocked) { if (Math.random() < 0.02) console.log(`[Farm] ${asset} risk blocked: ${risk.reason}`); return; }
 
   const features = buildFeatures(asset);
-  if (!features) return; // price buffer not warm yet
+  if (!features) { if (Math.random() < 0.02) console.log(`[Farm] ${asset} features null — buffer not warm`); return; }
 
-  if (!decision.shouldFarm) return;
+  if (!decision.shouldFarm) {
+    if (Math.random() < 0.01) console.log(`[Farm] ${asset} blocked: ${decision.reason}`);
+    return;
+  }
 
   const { bet, target, stop, mode } = decision;
 
@@ -165,7 +173,7 @@ export async function checkFarmBot(ctx) {
       ? (Math.floor(amount / (bet === 'UP' ? s.yesAsk : (1 - s.yesBid))) - result.order.remaining_count)
       : Math.floor(amount / (bet === 'UP' ? s.yesAsk : (1 - s.yesBid)));
 
-    if (filled < 1) { console.warn('[Farm] 0 contracts filled'); return; }
+    if (filled < 1) { console.warn('[Farm] 0 contracts filled'); s.lastExitTime = Date.now(); return; }
 
     const spentActual = filled * (bet === 'UP' ? s.yesAsk : (1 - s.yesBid));
     const maxProfit   = filled * 1.00 - spentActual;
@@ -177,7 +185,7 @@ export async function checkFarmBot(ctx) {
       amount: spentActual, count: filled,
       entryYes: (s.yesAsk + s.yesBid) / 2,
       maxProfit,
-      lockedTP: maxProfit * 0.60,   // 60% of max payout
+      lockedTP: maxProfit * 0.50,   // 50% of max payout
       lockedSL: stop,               // % of amount — locked at entry
       featuresRaw: features,
       featuresNorm,
@@ -187,5 +195,7 @@ export async function checkFarmBot(ctx) {
     s.farmRounds++;
   } catch (err) {
     console.error(`[Farm] Buy failed:`, err.message);
+    // Apply re-entry cooldown after any buy failure to avoid hammering a thin market
+    s.lastExitTime = Date.now();
   }
 }

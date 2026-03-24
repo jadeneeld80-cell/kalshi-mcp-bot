@@ -41,8 +41,8 @@ export async function checkExit(ctx) {
 
   let exitReason = null;
 
-  // 1. Take profit — locked at entry for farm trades, else 60% of max
-  const tpTarget = trade.lockedTP ?? trade.maxProfit * 0.60;
+  // 1. Take profit — locked at entry for farm trades, else 50% of max
+  const tpTarget = trade.lockedTP ?? trade.maxProfit * 0.50;
   if (unrealizedPnL >= tpTarget) {
     exitReason = 'TAKE_PROFIT';
   }
@@ -57,11 +57,11 @@ export async function checkExit(ctx) {
   }
 
   // 3. Velocity reversal — YES moving hard against our bet for 3 ticks + have some profit locked
-  // Fix 7: Lower pctCaptured threshold 5%→2% — exit earlier on reversals
-  if (!exitReason && yesVelHistory.length >= 3 && pctCaptured > 0.02) {
+  // 0.12¢/s threshold avoids noise-triggered early exits; 5% pctCaptured ensures real profit
+  if (!exitReason && yesVelHistory.length >= 3 && pctCaptured > 0.05) {
     const recent = yesVelHistory.slice(-3);
     const avgVel = recent.reduce((a, b) => a + b) / recent.length;
-    const against = trade.bet === 'UP' ? avgVel < -0.08 : avgVel > 0.08;
+    const against = trade.bet === 'UP' ? avgVel < -0.12 : avgVel > 0.12;
     if (against) exitReason = 'VEL_REVERSAL';
   }
 
@@ -78,16 +78,24 @@ export async function checkExit(ctx) {
   }
 
   // 5. Time floor — exit at progressively lower capture thresholds as time runs out
-  // Fix 5: Add aggressive 45s tier — always exit with any profit in final 45s
   if (!exitReason) {
     if (
-      (secsLeft <= 45  && unrealizedPnL > 0)       ||
-      (secsLeft <= 90  && unrealizedPnL > 0)       ||
-      (secsLeft <= 180 && pctCaptured >= 0.10)      ||
-      (secsLeft <= 360 && pctCaptured >= 0.25)      ||
-      (secsLeft <= 600 && pctCaptured >= 0.40)
+      (secsLeft <= 45  && unrealizedPnL >= 0)       ||   // breakeven OK — avoid expiry surprise
+      (secsLeft <= 90  && unrealizedPnL > 0)        ||   // any profit
+      (secsLeft <= 180 && pctCaptured >= 0.08)       ||   // lowered from 10%
+      (secsLeft <= 360 && pctCaptured >= 0.20)       ||   // lowered from 25%
+      (secsLeft <= 600 && pctCaptured >= 0.35)            // lowered from 40%
     ) {
       exitReason = 'TIME_FLOOR';
+    }
+  }
+
+  // 6. Stale price guard — exit if YES price frozen > 30s during final 5 min
+  // Protects against holding through an untracked move when Kalshi WS goes silent
+  if (!exitReason && secsLeft < 300 && s.yesPriceHistory.length >= 2) {
+    const newest = s.yesPriceHistory[s.yesPriceHistory.length - 1];
+    if (Date.now() - newest.ts > 30_000) {
+      exitReason = 'STALE_PRICE';
     }
   }
 

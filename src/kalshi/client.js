@@ -55,8 +55,8 @@ async function request(method, path, body = null) {
   }
 
   if (!res.ok) {
-    const msg = data?.error || data?.raw || res.statusText;
-    throw new Error(`Kalshi ${method} ${path} → ${res.status}: ${msg}`);
+    const raw = typeof data?.error === 'object' ? JSON.stringify(data.error) : (data?.error || data?.raw || res.statusText);
+    throw new Error(`Kalshi ${method} ${path} → ${res.status}: ${raw}`);
   }
 
   return data;
@@ -100,14 +100,36 @@ export async function getMarket(ticker) {
   return data.market;
 }
 
-// Find the active 15M market for an asset (BTC or ETH)
+// Find the active 15M market for an asset (BTC or ETH).
+//
+// Strategy: target the market closing at the NEXT 15-minute UTC boundary.
+// This is more reliable than "any future market" because the new window's
+// market often isn't status:'open' until 15–30s after the boundary, causing
+// the old "any future" approach to either return the just-expired market or
+// throw when nothing is listed yet.
 export async function findActiveMarket(asset) {
   const series = asset === 'ETH' ? 'KXETH15M' : 'KXBTC15M';
   const markets = await getMarkets({ series_ticker: series, status: 'open' });
   if (!markets.length) throw new Error(`No open ${series} market found`);
-  // Filter to markets that haven't closed yet (prevents connecting to an
-  // already-expired ticker at window boundaries), then sort by soonest close.
+
   const now = Date.now();
+  // The current window closes at the next 15-minute UTC mark.
+  const targetCloseMs = (Math.floor(now / (15 * 60 * 1000)) + 1) * 15 * 60 * 1000;
+  // ±90s tolerance: handles early lookups (new market not yet 'open') and
+  // late lookups (clock skew / slow API propagation).
+  const TOLERANCE_MS = 90_000;
+
+  const matching = markets.filter(m => {
+    const ct = new Date(m.close_time).getTime();
+    return Math.abs(ct - targetCloseMs) <= TOLERANCE_MS;
+  });
+
+  if (matching.length > 0) {
+    matching.sort((a, b) => new Date(a.close_time) - new Date(b.close_time));
+    return matching[0];
+  }
+
+  // Fallback: any market with a future close_time
   const future = markets.filter(m => new Date(m.close_time).getTime() > now);
   if (!future.length) throw new Error(`No future-expiring ${series} market found`);
   future.sort((a, b) => new Date(a.close_time) - new Date(b.close_time));

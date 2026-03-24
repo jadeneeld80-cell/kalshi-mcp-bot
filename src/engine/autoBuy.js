@@ -149,7 +149,9 @@ async function fireAutoBuy(asset, s, balance, cd) {
   const b = bet === 'UP' ? (1 - yesAsk) / yesAsk : yesBid / (1 - yesBid);
   const kelly = (b * modelProb - (1 - modelProb)) / b;
   const halfKelly = Math.max(0, kelly * 0.5);
-  const amount = Math.max(Math.min(halfKelly * balance, MAX_FRACTION * balance), KALSHI_MIN_BET);
+  const sidePrice = bet === 'UP' ? yesAsk : (1 - yesBid);
+  const minBet = Math.max(KALSHI_MIN_BET, sidePrice); // must afford ≥1 contract
+  const amount = Math.max(Math.min(halfKelly * balance, MAX_FRACTION * balance), minBet);
 
   console.log(`[AutoBuy] FIRE ${asset} ${bet} $${amount.toFixed(2)} p=${(modelProb*100).toFixed(0)}%`);
 
