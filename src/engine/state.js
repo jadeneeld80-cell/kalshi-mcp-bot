@@ -37,6 +37,7 @@ function createAssetState() {
     // Farm bot state
     farmRounds: 0,
     lastExitTime: 0,
+    lastLargeJumpTs: 0, // timestamp of last 3¢+ single-tick YES price jump
 
     // Auto-buy state
     crowdVelHistory: [], // last 4 yesVel readings (crowd block gate)

@@ -5,7 +5,7 @@ const RISK_DAILY_CAP        = 0.08;    // stop after 8% daily loss
 const RISK_SESSION_KILL     = 0.05;    // stop after 5% session loss
 const RISK_CONSEC_BRAKE     = 3;       // stop after 3 consecutive losses
 const RISK_COOLDOWN_MS      = 45_000;  // 45s cooldown after normal loss
-const RISK_STREAK_RESET_MS  = 5 * 60_000; // auto-reset streak after 5 min of no trading
+const RISK_STREAK_RESET_MS  = 30 * 60_000; // auto-reset streak after 30 min of no trading
 // Fix 5: Shorter cooldown for high-confidence modes (DECAY, STRONG_CONVICTION)
 export const RISK_COOLDOWN_FAST_MS = 20_000;
 

@@ -35,7 +35,13 @@ function checkGates(s, balance, btcVelocity) {
   if (secsLeft < 180)                                   return { blocked: true, reason: 'LATE' };
   if (Math.abs(btcVelocity) < VEL_FLOOR)               return { blocked: true, reason: 'FLATLINE' };
   if (now < autobuyCooldownUntil)                       return { blocked: true, reason: 'COOLDOWN' };
-  if (consecutiveLosses >= 3)                           return { blocked: true, reason: 'STREAK' };
+  if (consecutiveLosses >= 3) {
+    if (Date.now() - lastLossTime >= 30 * 60_000) {
+      s.consecutiveLosses = 0; // auto-reset after 30 min idle — mirrors checkRiskGuards
+    } else {
+      return { blocked: true, reason: 'STREAK' };
+    }
+  }
   if (liquidity === 'LOW')                              return { blocked: true, reason: 'MKTCOND' };
   if (liquidity === 'MEDIUM' && regime === 'CHOPPY')    return { blocked: true, reason: 'MKTCOND' };
 

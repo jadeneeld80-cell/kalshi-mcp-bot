@@ -11,6 +11,7 @@ import { KalshiWebSocket } from '../kalshi/websocket.js';
 import { getBalance, findActiveMarket, getPositions } from '../kalshi/client.js';
 import { executeSell } from '../kalshi/orders.js';
 import { loadBrain } from '../nn/store.js';
+import { notify } from '../notify.js';
 
 // One Kalshi WS per asset — updates YES price in state
 const kalshiWS = {
@@ -31,6 +32,13 @@ function updateYes(asset, yesAsk, yesBid) {
     const prev = s.yesPriceHistory[s.yesPriceHistory.length - 3];
     const dt = (now - prev.ts) / 1000;
     s.yesVel = dt > 0 ? (mid - prev.price) * 100 / dt : 0;
+  }
+
+  // Detect large single-tick jumps for the large order guard in farmBot
+  if (s.yesPriceHistory.length >= 2) {
+    const prev = s.yesPriceHistory[s.yesPriceHistory.length - 2];
+    const jump = Math.abs((mid - prev.price) * 100);
+    if (jump > 3) s.lastLargeJumpTs = now;
   }
 
   s.yesAsk = yesAsk;
@@ -103,6 +111,7 @@ async function onWindowRoll(asset) {
     }
   }
   console.error(`[Clock] Failed to get new ${asset} market after 10 attempts`);
+  notify('⚠️ Market Lookup Failed', `${asset}: could not find new market after 10 attempts`, 'warm_soft_error');
   _rolling[asset] = false;
   return false;
 }

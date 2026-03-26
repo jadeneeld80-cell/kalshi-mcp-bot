@@ -1,6 +1,8 @@
 import { executeSell } from '../kalshi/orders.js';
+import { getMarket } from '../kalshi/client.js';
 import { recordTradePnL } from './riskManager.js';
 import { recordTrade as recordBrainTrade } from '../nn/store.js';
+import { notify } from '../notify.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -48,10 +50,12 @@ export async function checkExit(ctx) {
   }
 
   // 2. Stop loss — locked % at entry, else regime-based
+  // 3s minimum hold (canStopAfter) prevents noise-triggered immediate stops
   if (!exitReason) {
     const regime = s.regime ?? 'NORMAL';
     const slPct = trade.lockedSL ?? STOP_LOSS[regime];
-    if (unrealizedPnL <= -(trade.amount * slPct)) {
+    const holdReady = !trade.canStopAfter || Date.now() >= trade.canStopAfter;
+    if (holdReady && unrealizedPnL <= -(trade.amount * slPct)) {
       exitReason = 'STOP_LOSS';
     }
   }
@@ -107,10 +111,28 @@ export async function checkExit(ctx) {
 async function executeExit(asset, s, reason, unrealizedPnL) {
   const trade = s.activeTrade;
   console.log(`[Exit] ${asset} ${trade.mode ?? ''} ${trade.bet} ${reason} PnL=$${unrealizedPnL.toFixed(2)}`);
+  const emoji = unrealizedPnL > 0 ? '✅' : '❌';
+  const sound = unrealizedPnL > 0 ? 'bubbly_success_ding' : 'warm_soft_error';
+  await notify(`${emoji} ${asset} Exit — ${reason}`, `${trade.mode} ${trade.bet} | PnL: $${unrealizedPnL.toFixed(3)}`, sound);
 
   try {
     await executeSell(trade.ticker, trade.side, trade.count);
   } catch (err) {
+    // If market is finalized, Kalshi already settled the position — clear it
+    if (err.message.includes('market_not_found')) {
+      try {
+        const market = await getMarket(trade.ticker);
+        if (market.status === 'finalized') {
+          console.log(`[Exit] Market finalized — Kalshi settled position; clearing trade`);
+          recordTradePnL(s, unrealizedPnL);
+          await appendLog({ asset, bet: trade.bet, mode: trade.mode, amount: trade.amount,
+            pnl: unrealizedPnL, win: unrealizedPnL > 0, reason: 'MARKET_SETTLED', at: new Date().toISOString() });
+          s.lastExitTime = Date.now();
+          s.activeTrade = null;
+          return;
+        }
+      } catch {}
+    }
     console.error(`[Exit] Sell failed (${reason}):`, err.message);
     return; // Don't clear trade — will retry next tick
   }
