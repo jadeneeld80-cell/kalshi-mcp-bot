@@ -1,12 +1,16 @@
 /**
- * Evaluator — scores a trade log against the 18 evaluation questions.
+ * Evaluator — scores a trade log against the evaluation questions.
  * Each question returns { id, question, score, detail }.
  * Overall score = fraction of questions with score >= 0.5.
+ *
+ * Questions are chosen to diagnose our actual live problems:
+ *  - ALIGNED mode has flat PnL despite 55% WR (wins too small vs losses)
+ *  - STOP_LOSS exits account for too many exits (should be < 20%)
+ *  - Exit quality: are profitable exits (TRAIL, VEL_REVERSAL) dominating?
+ *  - Mode PnL efficiency: each active mode must earn positive total PnL
  */
 
 // ── Evaluation Questions ──────────────────────────────────────────────────────
-// Each evaluator returns a score in [0, 1] (higher = better).
-// "pass" means score >= PASS_THRESHOLD.
 const PASS_THRESHOLD = 0.5;
 
 export function evaluate(trades, params) {
@@ -19,9 +23,9 @@ export function evaluate(trades, params) {
     q6_KellyCalibration(trades, params),
     q7_RegimeAdaptation(trades, params),
     q8_DecayModeEfficiency(trades, params),
-    q9_ReversalAccuracy(trades, params),
+    q9_AlignedModePnLQuality(trades, params),   // replaces dead REVERSAL accuracy Q
     q10_MomentumEdge(trades, params),
-    q11_LiquidityFiltering(trades, params),
+    q11_StopLossRate(trades, params),            // replaces always-pass liquidity Q
     q12_VelocityReversalExit(trades, params),
     q13_TrailStopCapture(trades, params),
     q14_TimeFloorProtection(trades, params),
@@ -29,6 +33,8 @@ export function evaluate(trades, params) {
     q16_CooldownRespect(trades, params),
     q17_BrainImprovement(trades, params),
     q18_OverallPnL(trades, params),
+    q19_ModePnLEfficiency(trades, params),       // new: each active mode earns positive PnL
+    q20_ExitQualityDistribution(trades, params), // new: profitable exits must dominate
   ];
 
   const passed = results.filter(r => r.score >= PASS_THRESHOLD).length;
@@ -139,14 +145,24 @@ function q8_DecayModeEfficiency(trades) {
     `Need >= 65% for full score`);
 }
 
-function q9_ReversalAccuracy(trades) {
-  // Q9: REVERSAL mode precision (should not fire false reversals)
-  const rev = trades.filter(t => t.mode === 'REVERSAL');
-  if (!rev.length) return pass(9, 'REVERSAL mode accuracy', 0.5, 'No REVERSAL trades');
-  const wr = rev.filter(t => t.win).length / rev.length;
-  const score = Math.min(1, wr / 0.55);
-  return pass(9, `REVERSAL mode accuracy (${(wr*100).toFixed(1)}% of ${rev.length} trades)`, score,
-    `Need >= 55% for full score`);
+function q9_AlignedModePnLQuality(trades) {
+  // Q9: ALIGNED mode must have POSITIVE total PnL, not just decent win rate.
+  // Root problem: 55% WR but flat PnL means wins are smaller than losses.
+  // Score: positive total PnL + avg win >= avg loss.
+  const al = trades.filter(t => t.mode === 'ALIGNED');
+  if (!al.length) return pass(9, 'ALIGNED mode PnL quality', 0.5, 'No ALIGNED trades');
+  const totalPnL = al.reduce((s, t) => s + t.pnl, 0);
+  const wins   = al.filter(t => t.pnl > 0);
+  const losses = al.filter(t => t.pnl < 0);
+  const avgWin  = wins.length  ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length  : 0;
+  const avgLoss = losses.length ? losses.reduce((s, t) => s + Math.abs(t.pnl), 0) / losses.length : 0;
+  // Need: positive PnL AND win/loss ratio >= 1.0
+  const pnlOK = totalPnL > 0;
+  const rrOK  = avgLoss === 0 || avgWin / avgLoss >= 1.0;
+  const score = (pnlOK ? 0.6 : 0) + (rrOK ? 0.4 : 0);
+  return pass(9,
+    `ALIGNED PnL quality ($${totalPnL.toFixed(2)} total, R:R ${avgLoss > 0 ? (avgWin/avgLoss).toFixed(2) : 'N/A'})`,
+    score, `${al.length} trades | avg win $${avgWin.toFixed(3)} | avg loss $${avgLoss.toFixed(3)}`);
 }
 
 function q10_MomentumEdge(trades) {
@@ -158,14 +174,17 @@ function q10_MomentumEdge(trades) {
   return pass(10, `MOMENTUM mode edge (${(wr*100).toFixed(1)}% of ${mom.length} trades)`, score, '');
 }
 
-function q11_LiquidityFiltering(trades) {
-  // Q11: All trades are in HIGH or MEDIUM liquidity (no LOW trades)
-  // Since simulator blocks LOW_LIQ, we check mode distributions include no extreme spread entries
-  if (!trades.length) return pass(11, 'Liquidity filtering', 1.0, 'No trades');
-  // Proxy: check for trades with unreasonably high amounts (> 30% of typical balance estimate)
-  // We can't know liquidity at exit in logs, so score this as always passing in sim
-  return pass(11, 'Liquidity filtering (LOW_LIQ blocked)', 1.0,
-    'Simulator blocks LOW liquidity entries by design');
+function q11_StopLossRate(trades) {
+  // Q11: STOP_LOSS exits should be < 20% of all exits.
+  // High stop rate = entries are wrong-direction or stops too tight.
+  // Target: < 20% → score 1.0, > 40% → score 0.0.
+  if (!trades.length) return pass(11, 'Stop loss rate < 20%', 0.5, 'No trades');
+  const stops = trades.filter(t => t.reason === 'STOP_LOSS').length;
+  const rate = stops / trades.length;
+  // Linear: 0% → 1.0, 20% → 0.5 (pass threshold), 40%+ → 0.0
+  const score = Math.max(0, 1 - rate / 0.40);
+  return pass(11, `Stop loss rate (${(rate*100).toFixed(1)}% of exits)`, score,
+    `${stops}/${trades.length} exits were STOP_LOSS — target < 20%`);
 }
 
 function q12_VelocityReversalExit(trades) {
@@ -270,6 +289,39 @@ function q18_OverallPnL(trades) {
   const score = Math.min(1, Math.max(0, 0.5 + avgPerTrade * 5));
   return pass(18, `Overall PnL ($${totalPnL.toFixed(2)} across ${trades.length} trades)`, score,
     `Avg per trade: $${avgPerTrade.toFixed(3)}`);
+}
+
+function q19_ModePnLEfficiency(trades) {
+  // Q19: Every active mode (ALIGNED, MOMENTUM, DECAY) must earn positive PnL.
+  // A mode that fires often but bleeds money is a net drag on the system.
+  const modes = ['ALIGNED', 'MOMENTUM', 'DECAY'];
+  let passing = 0;
+  const details = [];
+  for (const mode of modes) {
+    const mt = trades.filter(t => t.mode === mode);
+    if (!mt.length) { passing++; details.push(`${mode}: no trades`); continue; }
+    const pnl = mt.reduce((s, t) => s + t.pnl, 0);
+    const wr  = mt.filter(t => t.win).length / mt.length;
+    if (pnl > 0) passing++;
+    details.push(`${mode}: $${pnl.toFixed(2)} (${(wr*100).toFixed(0)}% WR)`);
+  }
+  const score = passing / modes.length;
+  return pass(19, `Mode PnL efficiency (${passing}/${modes.length} modes profitable)`, score,
+    details.join(', '));
+}
+
+function q20_ExitQualityDistribution(trades) {
+  // Q20: Profitable exits (TRAIL_STOP + VEL_REVERSAL + TAKE_PROFIT) should
+  // account for >= 50% of all exits. If STOP_LOSS dominates, we're entering wrong.
+  if (!trades.length) return pass(20, 'Exit quality distribution', 0.5, 'No trades');
+  const profitable = trades.filter(t =>
+    ['TRAIL_STOP', 'VEL_REVERSAL', 'TAKE_PROFIT', 'TIME_FLOOR'].includes(t.reason) && t.pnl > 0
+  ).length;
+  const rate = profitable / trades.length;
+  // 50% profitable exits → score=1.0; 25% → score=0.5 (pass); 0% → score=0
+  const score = Math.min(1, rate / 0.50);
+  return pass(20, `Exit quality (${(rate*100).toFixed(1)}% are profitable exits)`, score,
+    `${profitable}/${trades.length} exits closed in profit`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

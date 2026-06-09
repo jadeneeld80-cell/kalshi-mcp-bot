@@ -7,6 +7,8 @@ import { executeBuy, executeSell, cancelOpenOrders } from '../kalshi/orders.js';
 import { getPositions, getFills } from '../kalshi/client.js';
 import { brainStats, importBrain, exportBrain } from '../nn/store.js';
 import { computeUnrealizedPnL } from '../engine/exitManager.js';
+import { getClassifierLog } from '../research/lossClassifier.js';
+import { getModeGuardStatus, forceEnable } from '../engine/modeGuard.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -203,9 +205,22 @@ async function handleTool(name, args) {
 
     case 'get_status': {
       const assets = args.asset ? [args.asset] : ['BTC', 'ETH'];
+      const classifierLog = getClassifierLog();
+      const lastClassifierAction = classifierLog.actions?.slice(-1)[0] ?? null;
+      const guardStatus = getModeGuardStatus();
       const result = {
         balance:  state.balance?.toFixed(2) ?? 'unknown',
+        simMode:  state.simMode,
+        paperBalance: state.simMode ? state.paperBalance?.toFixed(2) : undefined,
         assets:   Object.fromEntries(assets.map(a => [a, assetStatus(a)])),
+        classifier: {
+          lastAction: lastClassifierAction,
+          totalActions: classifierLog.actions?.length ?? 0,
+        },
+        modeGuard: {
+          disabled: guardStatus.disabled,
+          stats: guardStatus.stats,
+        },
       };
       return ok(result);
     }

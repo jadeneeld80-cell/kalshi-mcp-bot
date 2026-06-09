@@ -32,7 +32,8 @@ export function writeStateSnapshot() {
         autoBuyArmed: s.autoBuyArmed,
         farmRounds: s.farmRounds,
         activeTrade: s.activeTrade,
-        btcPrice:  s.windowOpenPrice,
+        spotPrice: s.spotPrice,        // live BTC/ETH spot (for cycleDelta in research)
+        btcPrice:  s.windowOpenPrice,  // window-open price (kept for compat)
       };
     }
     fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snap));

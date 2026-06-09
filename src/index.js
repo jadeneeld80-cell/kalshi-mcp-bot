@@ -31,6 +31,12 @@ import { startClock } from './engine/clock.js';
 async function main() {
   await startClock();
 
+  // Research loop — always runs regardless of mode.
+  // Records live ticks to data/snapshots/ and runs coordinate-descent optimizer every 5m.
+  const { ResearchLoop } = await import('./research/loop.js');
+  const research = new ResearchLoop(null);
+  research.start().catch(e => console.error('[Research] start error:', e.message));
+
   if (MCP_MODE) {
     const { startMCPServer } = await import('./mcp/server.js');
     await startMCPServer();

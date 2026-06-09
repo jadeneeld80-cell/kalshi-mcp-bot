@@ -14,12 +14,20 @@ const PARAMS_PATH = path.join(__dirname, '../../data/params.json');
 export const DEFAULTS = {
   // Farm bot entry thresholds
   SPREAD_EXTREME_FLOOR:        0.05,   // below this or above 1-this → SPREAD_EXTREME
-  DEAD_ZONE_LOW:               0.44,   // dead zone lower bound
-  DEAD_ZONE_HIGH:              0.56,   // dead zone upper bound
-  REVERSAL_PRIOR_THRESHOLD:    0.12,   // avg velocity magnitude for reversal prior window
-  REVERSAL_RECENT_THRESHOLD:   0.12,   // avg velocity magnitude for reversal recent window
-  ALIGNED_CYCLE_DELTA_MIN:     0.10,   // min cycleDelta for ALIGNED mode
-  MOMENTUM_SECS_MIN:           400,    // min secsLeft for MOMENTUM mode
+  DEAD_ZONE_LOW:               0.49,   // dead zone lower bound (matches live farmBot)
+  DEAD_ZONE_HIGH:              0.51,   // dead zone upper bound
+  ALIGNED_CYCLE_DELTA_MIN:     0.04,   // min cycleDelta for ALIGNED mode (matches live)
+  ALIGNED_VEL_MIN:             0.03,   // min |yesVel| for ALIGNED entry (matches live)
+  ALIGNED_STOP:                0.15,   // ALIGNED mode stop loss (live: 15%, likely too wide)
+  MOMENTUM_VEL_MIN:            0.08,   // min |yesVel| for MOMENTUM entry
+  MOMENTUM_SECS_MIN:           240,    // min secsLeft for MOMENTUM mode
+  MOMENTUM_STOP:               0.12,   // MOMENTUM mode stop loss
+  // Research-backed MOMENTUM filters (Polymarket v2→v3 study)
+  MOMENTUM_VEL_CONFIRM_TICKS:  40,     // require avg vel over last N ticks to confirm direction
+  MOMENTUM_EMA_FILTER:         1,      // 1=enabled: block entries opposing EMA12>EMA26 trend
+  MOMENTUM_POST_LOSS_PROB:     0.60,   // min modelProb after 3 consecutive losses (vs 0.52 default)
+  DECAY_STOP:                  0.02,   // DECAY mode stop loss
+  KELLY_FRACTION:              0.25,   // Kelly fraction (quarter-Kelly = 0.25)
   MODEL_PROB_DEFAULT:          0.52,   // default modelProb when brain has < min samples
   MODEL_PROB_MIN_SAMPLES:      10,     // min samples per direction before using model
 
@@ -54,12 +62,19 @@ export const DEFAULTS = {
 // Parameter bounds for the optimizer — [min, max] inclusive
 export const BOUNDS = {
   SPREAD_EXTREME_FLOOR:        [0.02, 0.10],
-  DEAD_ZONE_LOW:               [0.38, 0.48],
-  DEAD_ZONE_HIGH:              [0.52, 0.62],
-  REVERSAL_PRIOR_THRESHOLD:    [0.05, 0.30],
-  REVERSAL_RECENT_THRESHOLD:   [0.05, 0.30],
-  ALIGNED_CYCLE_DELTA_MIN:     [0.03, 0.25],
-  MOMENTUM_SECS_MIN:           [200,  700],
+  DEAD_ZONE_LOW:               [0.44, 0.49],
+  DEAD_ZONE_HIGH:              [0.51, 0.56],
+  ALIGNED_CYCLE_DELTA_MIN:     [0.02, 0.15],
+  ALIGNED_VEL_MIN:             [0.01, 0.10],
+  ALIGNED_STOP:                [0.04, 0.20],   // optimizer finds where ALIGNED stops bleeding
+  MOMENTUM_VEL_MIN:            [0.04, 0.15],
+  MOMENTUM_SECS_MIN:           [200,  500],
+  MOMENTUM_STOP:               [0.05, 0.20],
+  MOMENTUM_VEL_CONFIRM_TICKS:  [10,   80],
+  MOMENTUM_EMA_FILTER:         [0,    1],
+  MOMENTUM_POST_LOSS_PROB:     [0.52, 0.70],
+  DECAY_STOP:                  [0.01, 0.06],
+  KELLY_FRACTION:              [0.15, 0.40],
   MODEL_PROB_DEFAULT:          [0.50, 0.58],
   MODEL_PROB_MIN_SAMPLES:      [4,    25],
   RISK_COOLDOWN_MS:            [15_000, 90_000],

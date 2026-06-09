@@ -11,10 +11,12 @@ function kellyBet(bet, yesAsk, yesBid, modelProb, balance, P) {
   const b = bet === 'UP'
     ? (1 - yesAsk) / yesAsk
     : yesBid / (1 - yesBid);
-  const kelly    = (b * p - q) / b;
-  const halfKelly = Math.max(0, kelly * 0.5);
+  const kelly = (b * p - q) / b;
+  // Quarter-Kelly (matches live farmBot after Mar 2026 update)
+  const fraction = P.KELLY_FRACTION ?? 0.25;
+  const sized = Math.max(0, kelly * fraction);
   return Math.max(
-    Math.min(halfKelly * balance, P.KELLY_MAX_FRACTION * balance),
+    Math.min(sized * balance, P.KELLY_MAX_FRACTION * balance),
     0.05  // KALSHI_MIN_BET
   );
 }
@@ -26,30 +28,30 @@ function computeUnrealizedPnL(trade, yesAsk, yesBid) {
   return currentValue - trade.amount;
 }
 
-// ── Entry evaluator (mirrors farmBot.evaluateModes) ──────────────────────────
+// ── Entry evaluator (mirrors farmBot.evaluateModes — keep in sync) ───────────
+// REVERSAL, STRONG_CONVICTION, CONVICTION all disabled (matches live farmBot).
+// ADX/ATR gates omitted — snapshots lack these indicators; adx=null skips gate.
 
 function evaluateModes(s, regime, cycleDelta, pctAbove, P) {
   const { yesAsk, yesBid, secsLeft, yesVel, yesVelHistory, liquidity } = s;
   const yesPrice = (yesAsk + yesBid) / 2;
 
-  const FARM_MIN_TIME_LEFT = 240;
   const TARGET = { CALM: P.TARGET_CALM, NORMAL: P.TARGET_NORMAL, CHOPPY: P.TARGET_CHOPPY };
-  const STOP   = { CALM: P.STOP_CALM,   NORMAL: P.STOP_NORMAL,   CHOPPY: P.STOP_CHOPPY };
 
-  // Gate A: momentum divergence
+  // Gate A: momentum divergence (95% confidence — same threshold as live)
   if (Math.abs(cycleDelta) > 0.6 && Math.abs(yesVel) > 0.8) {
     if ((cycleDelta > 0) !== (yesVel > 0)) return { shouldFarm: false, reason: 'GATE_A' };
   }
-  // Gate B: EMA/momentum conflict
-  if (Math.abs(cycleDelta) > 0.2 && Math.abs(yesVel) > 0.3) {
+  // Gate B: EMA/momentum conflict (updated to match live 0.4/0.5 thresholds)
+  if (Math.abs(cycleDelta) > 0.4 && Math.abs(yesVel) > 0.5) {
     if ((cycleDelta > 0) !== (yesVel > 0)) return { shouldFarm: false, reason: 'GATE_B' };
   }
-  // Gate C: signal strength stop tightener
+  // Signal-strength stop tightener (Gate C in live)
   const signalStrength = Math.abs(cycleDelta) * 10 + Math.abs(yesVel);
   const stopMult = signalStrength > 5 ? 0.70 : 1.0;
 
   // Common entry blocks
-  if (secsLeft < FARM_MIN_TIME_LEFT && !(secsLeft >= 60 && secsLeft <= 180)) {
+  if (secsLeft < 200 && !(secsLeft >= 60 && secsLeft <= 180)) {
     return { shouldFarm: false, reason: 'TOO_LATE' };
   }
   if (yesPrice <= P.SPREAD_EXTREME_FLOOR || yesPrice >= (1 - P.SPREAD_EXTREME_FLOOR)) {
@@ -60,53 +62,47 @@ function evaluateModes(s, regime, cycleDelta, pctAbove, P) {
   }
   if (liquidity === 'LOW') return { shouldFarm: false, reason: 'LOW_LIQ' };
 
-  // Mode 1: TIME DECAY
+  // ── Mode 1: TIME DECAY (60–180s) ───────────────────────────────────────────
   if (secsLeft >= 60 && secsLeft <= 180) {
     if (yesPrice >= 0.80 && pctAbove >= 0.65)
-      return { shouldFarm: true, bet: 'UP',   target: 0.04, stop: 0.02 * stopMult, mode: 'DECAY' };
+      return { shouldFarm: true, bet: 'UP',   target: 0.04, stop: (P.DECAY_STOP ?? 0.02) * stopMult, mode: 'DECAY' };
     if (yesPrice <= 0.20 && pctAbove <= 0.35)
-      return { shouldFarm: true, bet: 'DOWN', target: 0.04, stop: 0.02 * stopMult, mode: 'DECAY' };
-    return { shouldFarm: false, reason: 'DECAY_NO_SIGNAL' };
+      return { shouldFarm: true, bet: 'DOWN', target: 0.04, stop: (P.DECAY_STOP ?? 0.02) * stopMult, mode: 'DECAY' };
+    // No signal → fall through to ALIGNED/MOMENTUM for mid-range entries
   }
 
-  // Mode 2: REVERSAL
-  if (yesPrice >= 0.15 && yesPrice <= 0.85 && yesVelHistory.length >= 4) {
-    const prior  = yesVelHistory.slice(-4, -2);
-    const recent = yesVelHistory.slice(-2);
-    const priorAvg  = prior.reduce((a, b) => a + b) / prior.length;
-    const recentAvg = recent.reduce((a, b) => a + b) / recent.length;
-    if (priorAvg <= -P.REVERSAL_PRIOR_THRESHOLD && recentAvg >= P.REVERSAL_RECENT_THRESHOLD)
-      return { shouldFarm: true, bet: 'UP',   target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'REVERSAL' };
-    if (priorAvg >= P.REVERSAL_PRIOR_THRESHOLD && recentAvg <= -P.REVERSAL_RECENT_THRESHOLD)
-      return { shouldFarm: true, bet: 'DOWN', target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'REVERSAL' };
-  }
+  // ── Mode 2: REVERSAL — DISABLED ─────────────────────────────────────────
+  // Live log: 0% win rate, −$8.24 total. Disabled in live farmBot.
 
-  // Mode 3: STRONG CONVICTION
-  if ((yesPrice >= 0.80 && yesPrice <= 0.95) || (yesPrice >= 0.05 && yesPrice <= 0.20)) {
-    const bet = yesPrice >= 0.80 ? 'UP' : 'DOWN';
-    return { shouldFarm: true, bet, target: 0.03, stop: 0.015 * stopMult, mode: 'STRONG_CONVICTION' };
-  }
+  // ── Mode 3: STRONG_CONVICTION — DISABLED ────────────────────────────────
+  // Live log: 8–9% win rate, −$2.56 total. Disabled in live farmBot.
 
-  // Mode 4: CONVICTION
-  if ((yesPrice >= 0.70 && yesPrice < 0.80) || (yesPrice > 0.20 && yesPrice <= 0.30)) {
-    const bet    = yesPrice >= 0.70 ? 'UP' : 'DOWN';
-    const target = secsLeft < 8 * 60 ? 0.04 : 0.05;
-    return { shouldFarm: true, bet, target, stop: 0.03 * stopMult, mode: 'CONVICTION' };
-  }
+  // ── Mode 4: CONVICTION — DISABLED ───────────────────────────────────────
+  // Live log: 20% win rate, −$1.56 total. Disabled in live farmBot.
 
-  // Mode 5: ALIGNED
-  if (Math.abs(cycleDelta) >= P.ALIGNED_CYCLE_DELTA_MIN && Math.abs(yesVel) >= 0.05) {
+  // ── Mode 5: ALIGNED ───────────────────────────────────────────────────────
+  const alignedVelMin = P.ALIGNED_VEL_MIN ?? 0.03;
+  if (Math.abs(cycleDelta) >= P.ALIGNED_CYCLE_DELTA_MIN && Math.abs(yesVel) >= alignedVelMin) {
     if ((cycleDelta > 0) === (yesVel > 0)) {
       const bet = cycleDelta > 0 ? 'UP' : 'DOWN';
-      return { shouldFarm: true, bet, target: TARGET[regime], stop: STOP[regime] * 0.8 * stopMult, mode: 'ALIGNED' };
+      const stop = (P.ALIGNED_STOP ?? TARGET[regime]) * stopMult;
+      return { shouldFarm: true, bet, target: TARGET[regime], stop, mode: 'ALIGNED' };
     }
     return { shouldFarm: false, reason: 'ALIGNED_CONFLICT' };
   }
 
-  // Mode 6: MOMENTUM
-  if (yesPrice >= 0.30 && yesPrice <= 0.70 && Math.abs(yesVel) >= 0.08 && secsLeft > P.MOMENTUM_SECS_MIN) {
-    const bet = yesVel > 0 ? 'UP' : 'DOWN';
-    return { shouldFarm: true, bet, target: TARGET[regime], stop: STOP[regime] * stopMult, mode: 'MOMENTUM' };
+  // ── Mode 6: MOMENTUM ──────────────────────────────────────────────────────
+  // Require 2 consecutive ticks (matches live farmBot update)
+  const momentumVelMin = P.MOMENTUM_VEL_MIN ?? 0.08;
+  if (yesPrice >= 0.30 && yesPrice <= 0.70 && secsLeft > P.MOMENTUM_SECS_MIN
+      && yesVelHistory.length >= 2) {
+    const last2Avg = yesVelHistory.slice(-2).reduce((a, b) => a + b) / 2;
+    if (Math.abs(yesVel) >= momentumVelMin && Math.abs(last2Avg) >= 0.06
+        && Math.sign(yesVel) === Math.sign(last2Avg)) {
+      const bet = yesVel > 0 ? 'UP' : 'DOWN';
+      const stop = (P.MOMENTUM_STOP ?? TARGET[regime]) * stopMult;
+      return { shouldFarm: true, bet, target: TARGET[regime], stop, mode: 'MOMENTUM' };
+    }
   }
 
   return { shouldFarm: false, reason: 'NO_MODE' };
@@ -204,6 +200,13 @@ export function simulate(snapshots, P, balance = 10, brain = null) {
   let lastExitSnapIdx = -99;  // snapshot index of last exit (for reentry wait)
   const REENTRY_WAIT_TICKS = 3; // ~8-9 seconds at 3s tick interval
 
+  // Risk management state (persists across windows, mirrors riskManager.js)
+  let consecutiveLosses = 0;
+  let lastLossSnapIdx = -999;
+  const STREAK_BRAKE = 3;
+  const COOLDOWN_TICKS = 15;    // ~45s at 3s tick interval
+  const STREAK_RESET_TICKS = 600; // ~30 min of no trading
+
   for (let snapIdx = 0; snapIdx < snapshots.length; snapIdx++) {
     const snap = snapshots[snapIdx];
     const {
@@ -266,6 +269,13 @@ export function simulate(snapshots, P, balance = 10, brain = null) {
         trades.push(entry);
         activeTrade = null;
         lastExitSnapIdx = snapIdx;
+        // Update streak counters
+        if (exit.pnl < 0) {
+          consecutiveLosses++;
+          lastLossSnapIdx = snapIdx;
+        } else {
+          consecutiveLosses = 0;
+        }
       }
     }
 
@@ -274,20 +284,35 @@ export function simulate(snapshots, P, balance = 10, brain = null) {
       // Reentry wait (cooldown after last exit)
       if (snapIdx - lastExitSnapIdx < REENTRY_WAIT_TICKS) continue;
 
-      const cycleDelta = (windowOpenPrice && btcPrice)
+      // Streak brake — mirrors riskManager.checkRiskGuards
+      if (snapIdx - lastLossSnapIdx < COOLDOWN_TICKS) continue;
+      if (consecutiveLosses >= STREAK_BRAKE) {
+        if (snapIdx - lastLossSnapIdx >= STREAK_RESET_TICKS) {
+          consecutiveLosses = 0; // auto-reset after 30 min idle
+        } else {
+          continue;
+        }
+      }
+
+      // btcPrice in old snapshots is YES mid (0–1); in new snapshots it's actual spot (>100).
+      // For old snapshots, use yesVel-based cycleDelta (more honest than YES-price arithmetic).
+      const isSpotPrice = btcPrice > 1;
+      const cycleDelta = isSpotPrice && windowOpenPrice && windowOpenPrice > 1
         ? (btcPrice - windowOpenPrice) / windowOpenPrice * 100
-        : 0;
+        : yesVel * 2; // proxy: scale yesVel (¢/s) to approximate % drift
 
       const decision = evaluateModes(s, regime, cycleDelta, pctAbove, P);
       if (!decision.shouldFarm) continue;
 
       const { bet, target, stop, mode } = decision;
 
-      // Model probability
+      // Model probability — use brain sample count to decide if NN is reliable
       let modelProb = P.MODEL_PROB_DEFAULT;
-      if (brain && (bet === 'UP' ? brain.dataUp : brain.dataDown).length >= P.MODEL_PROB_MIN_SAMPLES) {
-        // In simulation we use the raw stored prob if available in snap, else default
-        modelProb = snap.modelProb ?? P.MODEL_PROB_DEFAULT;
+      if (brain) {
+        const dirSamples = (bet === 'UP' ? brain.dataUp : brain.dataDown) ?? [];
+        if (dirSamples.length >= P.MODEL_PROB_MIN_SAMPLES) {
+          modelProb = snap.modelProb ?? P.MODEL_PROB_DEFAULT;
+        }
       }
 
       const amount = kellyBet(bet, yesAsk, yesBid, modelProb, currentBalance, P);

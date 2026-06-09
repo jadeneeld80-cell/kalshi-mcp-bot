@@ -10,9 +10,17 @@ import { evaluate } from './evaluator.js';
 import { optimize } from './optimizer.js';
 import { Recorder } from './recorder.js';
 import { saveReport } from './reporter.js';
+import { updateDiscrepancy, getCalibratedScore, getDiscrepancyStats } from './discrepancy.js';
+import { runLossClassifier } from './lossClassifier.js';
+import { notify } from '../notify.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+function loadBrain(asset) {
+  const p = path.join(__dirname, `../../data/${asset.toLowerCase()}_brain.json`);
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LIVE_STATE_FILE  = path.join(__dirname, '../../data/live_state.json');
@@ -92,25 +100,32 @@ export class ResearchLoop {
 
     console.log(`[ResearchLoop] Running simulation on ${snapshots.length} snapshots...`);
 
+    // Load latest brains from disk so simulation reflects current NN state
+    const btcBrain = loadBrain('BTC');
+    const ethBrain = loadBrain('ETH');
+
     // Baseline with current params
-    const baselineTrades = simulate(snapshots, this._params);
+    const baselineTrades = simulate(snapshots, this._params, 10,
+      snapshots[0]?.asset === 'ETH' ? ethBrain : btcBrain);
     const baseline = baselineTrades.length >= 3
       ? evaluate(baselineTrades, this._params)
       : { overallScore: 0, questions: [] };
 
-    console.log(`[ResearchLoop] Baseline: ${(baseline.overallScore * 100).toFixed(1)}% (${baselineTrades.length} trades)`);
+    console.log(`[ResearchLoop] Baseline: ${(baseline.overallScore * 100).toFixed(1)}% (${baselineTrades.length} trades, ${snapshots.length} ticks)`);
 
     // Run optimizer
     const { params: newParams, finalScore, history } = await optimize({
       snapshots,
       initialParams: this._params,
-      rounds: 3,
+      rounds: 5,
     });
 
     this._params = newParams;
 
-    // Re-evaluate with tuned params
-    const tunedTrades = simulate(snapshots, this._params);
+    // Re-evaluate with tuned params (use mixed brain by majority asset)
+    const majorityAsset = snapshots.filter(s => s.asset === 'ETH').length > snapshots.length / 2 ? 'ETH' : 'BTC';
+    const tunedTrades = simulate(snapshots, this._params, 10,
+      majorityAsset === 'ETH' ? ethBrain : btcBrain);
     const tunedEval   = tunedTrades.length >= 3
       ? evaluate(tunedTrades, this._params)
       : { overallScore: 0, questions: [] };
@@ -128,7 +143,12 @@ export class ResearchLoop {
     this._allTrades.push(...tunedTrades);
     this._lastScore = tunedEval.overallScore;
 
-    console.log(`[ResearchLoop] Sim cycle done. Score: ${(tunedEval.overallScore * 100).toFixed(1)}% (${tunedTrades.length} trades)`);
+    const calibratedScore = getCalibratedScore(tunedEval.overallScore, tunedTrades);
+    const discStats = getDiscrepancyStats();
+    const biasLabel = discStats.overall.observations >= 5
+      ? ` | bias=${discStats.overall.biasRatio.toFixed(3)} calibrated=${(calibratedScore*100).toFixed(1)}%`
+      : ' | bias=uncalibrated (< 5 obs)';
+    console.log(`[ResearchLoop] Sim cycle done. Score: ${(tunedEval.overallScore * 100).toFixed(1)}%${biasLabel} (${tunedTrades.length} trades)`);
 
     // Save report
     this._saveCurrentReport(tunedEval.questions);
@@ -138,13 +158,17 @@ export class ResearchLoop {
   async _runLiveCycle() {
     if (!this._running) return;
 
-    console.log('[ResearchLoop] Live cycle — checking bot status...');
+    console.log('[ResearchLoop] Live cycle — reading trade log...');
 
     try {
-      // Get current status to check if armed and has a trade
-      const statusResult = await this._mcp.callTool('get_status', {});
-      const status = parseToolContent(statusResult);
-      if (!status) return;
+      // MCP status check is optional — skip if client not connected
+      if (this._mcp) {
+        try {
+          const statusResult = await this._mcp.callTool('get_status', {});
+          const status = parseToolContent(statusResult);
+          if (!status) console.log('[ResearchLoop] Live: MCP status unavailable, continuing with trade log');
+        } catch {}
+      }
 
       // Read trade log directly from disk
       let history = { trades: [] };
@@ -169,6 +193,20 @@ export class ResearchLoop {
         return;
       }
 
+      // Bayesian calibration update — compare last sim prediction to actual live outcomes.
+      // Uses the same snapshot window the last sim ran on so the comparison is apples-to-apples.
+      const lastSimTrades = this._allTrades.filter(t => t.source !== 'live').slice(-200);
+      updateDiscrepancy(lastSimTrades, newTrades);
+
+      // Loss classifier — auto-adjust params based on failure patterns in recent live trades
+      const allLiveTrades = [...this._allTrades.filter(t => t.source === 'live'), ...newTrades];
+      const classifierAction = runLossClassifier(allLiveTrades);
+      if (classifierAction) {
+        // Reload params so the updated value is picked up by the next sim cycle
+        this._params = loadParams();
+        console.log(`[ResearchLoop] Params reloaded after classifier adjustment: ${classifierAction.param}`);
+      }
+
       const cycleResult = {
         type:       'live',
         at:         new Date().toISOString(),
@@ -184,6 +222,41 @@ export class ResearchLoop {
       this._lastScore = liveEval.overallScore;
 
       console.log(`[ResearchLoop] Live cycle: ${newTrades.length} trades, score ${(cycleResult.score * 100).toFixed(1)}%`);
+
+      // Sim training progress report
+      const allSimTrades = [
+        ...this._allTrades.filter(t => t.sim),
+        ...newTrades.filter(t => t.sim),
+      ];
+      if (allSimTrades.length > 0) {
+        const simWins  = allSimTrades.filter(t => t.win).length;
+        const simWR    = simWins / allSimTrades.length;
+        const target   = 200;
+        const wrTarget = 0.55;
+        const ready    = allSimTrades.length >= target && simWR >= wrTarget;
+        console.log(`[SimTraining] ${allSimTrades.length}/${target} trades | WR=${(simWR*100).toFixed(0)}% (need ${(wrTarget*100).toFixed(0)}%) | ${ready ? '✅ READY FOR LIVE' : '📚 training...'}`);
+
+        // Fire push notification when target is hit (only once)
+        if (ready && !this._simReadyNotified) {
+          this._simReadyNotified = true;
+          await notify(
+            '🚀 Bot Ready for Live Trading',
+            `Sim training complete: ${allSimTrades.length} trades, ${(simWR*100).toFixed(0)}% win rate. Time to go live!`,
+            'default'
+          );
+          console.log('[SimTraining] 🔔 Push notification sent — training target reached!');
+        }
+
+        // Progress ping every 50 trades
+        if (allSimTrades.length % 50 === 0 && !ready) {
+          await notify(
+            `📚 Sim Training: ${allSimTrades.length}/200`,
+            `WR=${(simWR*100).toFixed(0)}% | Need 55% to go live`,
+            'default'
+          );
+        }
+      }
+
       this._saveCurrentReport(liveEval.questions);
 
     } catch (err) {

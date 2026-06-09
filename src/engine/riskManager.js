@@ -1,11 +1,12 @@
 // Pure guard functions — return { blocked, reason } or mutate P&L counters.
 // All dollar values in USD.
 
-const RISK_DAILY_CAP        = 0.08;    // stop after 8% daily loss
-const RISK_SESSION_KILL     = 0.05;    // stop after 5% session loss
-const RISK_CONSEC_BRAKE     = 3;       // stop after 3 consecutive losses
-const RISK_COOLDOWN_MS      = 45_000;  // 45s cooldown after normal loss
-const RISK_STREAK_RESET_MS  = 30 * 60_000; // auto-reset streak after 30 min of no trading
+const RISK_DAILY_CAP           = 0.08;         // stop after 8% daily loss
+const RISK_SESSION_KILL        = 0.05;         // stop after 5% session loss
+const RISK_SESSION_KILL_COOLDOWN_MS = 60 * 60_000; // 1 hour cooldown after session kill, then auto-resume
+const RISK_CONSEC_BRAKE        = 3;            // stop after 3 consecutive losses
+const RISK_COOLDOWN_MS         = 45_000;       // 45s cooldown after normal loss
+const RISK_STREAK_RESET_MS     = 30 * 60_000;  // auto-reset streak after 30 min of no trading
 // Fix 5: Shorter cooldown for high-confidence modes (DECAY, STRONG_CONVICTION)
 export const RISK_COOLDOWN_FAST_MS = 20_000;
 
@@ -26,14 +27,28 @@ export function checkRiskGuards(s, balance, fastCooldown = false) {
     }
   }
 
-  if (s.sessionStartBalance !== null &&
-      s.sessionPnL <= -(s.sessionStartBalance * RISK_SESSION_KILL)) {
-    return { blocked: true, reason: 'SESSIONKILL' };
-  }
+  // Session kill and daily cap are real-money guards — skip in DRY_RUN and sim mode
+  // so the bot keeps collecting training data even after a bad streak.
+  if (process.env.DRY_RUN !== 'true' && !s._simMode) {
+    if (s.sessionStartBalance !== null &&
+        s.sessionPnL <= -(s.sessionStartBalance * RISK_SESSION_KILL)) {
+      // Auto-resume after cooldown instead of blocking until restart
+      if (!s.sessionKillAt) s.sessionKillAt = now;
+      if (now - s.sessionKillAt < RISK_SESSION_KILL_COOLDOWN_MS) {
+        const minsLeft = Math.ceil((RISK_SESSION_KILL_COOLDOWN_MS - (now - s.sessionKillAt)) / 60_000);
+        return { blocked: true, reason: 'SESSIONKILL', resumesInMins: minsLeft };
+      }
+      // Cooldown elapsed — reset session so trading resumes
+      s.sessionPnL = 0;
+      s.sessionStartBalance = s.sessionStartBalance; // keep same baseline
+      s.sessionKillAt = null;
+      console.log(`[Risk] SESSIONKILL cooldown elapsed — resuming trading`);
+    }
 
-  if (s.dailyStartBalance !== null &&
-      s.dailyPnL <= -(s.dailyStartBalance * RISK_DAILY_CAP)) {
-    return { blocked: true, reason: 'DAILYCAP' };
+    if (s.dailyStartBalance !== null &&
+        s.dailyPnL <= -(s.dailyStartBalance * RISK_DAILY_CAP)) {
+      return { blocked: true, reason: 'DAILYCAP' };
+    }
   }
 
   return { blocked: false };

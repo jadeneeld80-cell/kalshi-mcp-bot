@@ -25,14 +25,16 @@ export class Recorder {
    */
   ingest(statusData) {
     if (!statusData) return;
-    const ts = statusData.timestamp ?? new Date().toISOString();
+    // live_state.json uses "ts"; MCP get_status uses "timestamp"
+    const ts = statusData.ts ?? statusData.timestamp ?? new Date().toISOString();
     const assets = statusData.assets ?? {};
-    if (assets.BTC) this._ingestAsset('BTC', { ...assets.BTC, btcPrice: assets.BTC.price }, ts);
-    if (assets.ETH) this._ingestAsset('ETH', { ...assets.ETH, ethPrice: assets.ETH.price }, ts);
+    if (assets.BTC) this._ingestAsset('BTC', assets.BTC, ts);
+    if (assets.ETH) this._ingestAsset('ETH', assets.ETH, ts);
   }
 
   _ingestAsset(asset, status, timestamp) {
-    const { yesAsk, yesBid, secsLeft, windowId, btcPrice, ethPrice,
+    const { yesAsk, yesBid, secsLeft, windowId,
+            spotPrice, btcPrice, ethPrice,
             yesVel = 0, liquidity = 'MEDIUM', regime = 'NORMAL',
             ticker = null } = status;
 
@@ -40,7 +42,9 @@ export class Recorder {
 
     // Derive window from secsLeft
     const wid = windowId ?? Math.floor(Date.now() / (15 * 60 * 1000));
-    const price = asset === 'BTC' ? (btcPrice ?? status.spotPrice) : (ethPrice ?? status.spotPrice);
+    // spotPrice = live feed price (BTC or ETH spot, updated every tick)
+    // btcPrice = windowOpenPrice (fixed at window start — fallback only)
+    const price = spotPrice ?? (asset === 'BTC' ? btcPrice : ethPrice);
 
     if (!this._windows[asset] || this._windows[asset].windowId !== wid) {
       // Save previous window if complete enough
@@ -67,7 +71,7 @@ export class Recorder {
 
   _completeWindow(asset, windowData) {
     this._completedWindows.push(windowData);
-    if (this._completedWindows.length > 10) this._completedWindows.shift();
+    if (this._completedWindows.length > 50) this._completedWindows.shift();
 
     // Persist to disk
     const filename = path.join(SNAPSHOTS_DIR, `${asset}_${windowData.windowId}.json`);
@@ -92,7 +96,7 @@ export class Recorder {
       const files = fs.readdirSync(SNAPSHOTS_DIR)
         .filter(f => f.endsWith('.json'))
         .sort()
-        .slice(-20); // last 20 windows
+        .slice(-100); // last 100 windows
 
       for (const f of files) {
         try {
@@ -102,8 +106,8 @@ export class Recorder {
           }
         } catch {}
       }
-      if (this._completedWindows.length > 10) {
-        this._completedWindows = this._completedWindows.slice(-10);
+      if (this._completedWindows.length > 50) {
+        this._completedWindows = this._completedWindows.slice(-50);
       }
       console.log(`[Recorder] Loaded ${this._completedWindows.length} windows from disk`);
     } catch {}

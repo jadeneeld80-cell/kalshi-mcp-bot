@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import fs from 'fs';
 import { checkFarmBot } from './farmBot.js';
 import { checkAutoBuy } from './autoBuy.js';
 import { checkExit } from './exitManager.js';
@@ -11,7 +12,22 @@ import { KalshiWebSocket } from '../kalshi/websocket.js';
 import { getBalance, findActiveMarket, getPositions } from '../kalshi/client.js';
 import { executeSell } from '../kalshi/orders.js';
 import { loadBrain } from '../nn/store.js';
+import { startOfflineTraining, stopOfflineTraining } from './offlineTrainer.js';
 import { notify } from '../notify.js';
+
+// ── Offline-mode tracking ─────────────────────────────────────────────────────
+// After OFFLINE_THRESHOLD consecutive failed onWindowRoll calls, the bot stops
+// hammering Kalshi and enters offline-learning mode. A separate 30s poller
+// checks for market availability. When the market appears the bot auto-resumes.
+const OFFLINE_THRESHOLD = 15; // ~12 min of failed market lookups before giving up
+const OFFLINE_POLL_MS   = 30_000;
+
+const _offlineMode    = { BTC: false, ETH: false };
+const _marketFails    = { BTC: 0,     ETH: 0     };
+const _offlinePollers = {};
+
+// Saved armed state so we can restore it on resume (offline entry clears in-memory flags)
+const _armedBeforeOffline = {};
 
 // One Kalshi WS per asset — updates YES price in state
 const kalshiWS = {
@@ -82,10 +98,13 @@ function getLiquidity(asset, hour, yesAsk, yesBid) {
 // Per-asset lock — prevents concurrent onWindowRoll calls while one is in-flight
 const _rolling = { BTC: false, ETH: false };
 
-// Returns true on success, false on failure (so caller can decide whether to
-// advance windowId — we only advance on success to allow retry on failure).
+// Returns:
+//   true  — market found successfully
+//   false — all 10 attempts failed (genuine failure, counts toward offline threshold)
+//   null  — call already in progress (rolling lock) or already in offline mode;
+//            ignored by caller — does NOT count toward offline threshold
 async function onWindowRoll(asset) {
-  if (_rolling[asset]) return false; // already in progress
+  if (_rolling[asset] || _offlineMode[asset]) return null; // already in progress / offline
   _rolling[asset] = true;
 
   const s = state[asset];
@@ -110,33 +129,167 @@ async function onWindowRoll(asset) {
       await new Promise(r => setTimeout(r, 5000)); // 10 × 5s = 50s max wait
     }
   }
-  console.error(`[Clock] Failed to get new ${asset} market after 10 attempts`);
-  notify('⚠️ Market Lookup Failed', `${asset}: could not find new market after 10 attempts`, 'warm_soft_error');
+  console.error(`[Clock] ${asset} market lookup failed (attempt ${_marketFails[asset] + 1}/${OFFLINE_THRESHOLD})`);
   _rolling[asset] = false;
   return false;
 }
 
+/**
+ * Enter offline-learning mode for one asset.
+ * - Disarms farm + auto-buy so no spurious entries fire
+ * - Starts the offline trainer to keep the NN improving on existing data
+ * - Polls every 30s for market availability; auto-resumes when found
+ */
+function enterOfflineMode(asset) {
+  if (_offlineMode[asset]) return;
+  _offlineMode[asset] = true;
+
+  const s = state[asset];
+
+  // Save armed state so we can restore it on resume
+  _armedBeforeOffline[asset] = {
+    farmArmed:    s.farmArmed,
+    autoBuyArmed: s.autoBuyArmed,
+  };
+
+  // Disarm — no new entries while market is down
+  s.farmArmed    = false;
+  s.autoBuyArmed = false;
+
+  console.log(
+    `[Clock] ${asset} entering offline mode after ${OFFLINE_THRESHOLD} failed market lookups. ` +
+    `Bots paused — NN will keep learning from existing data.`
+  );
+  notify(
+    '🔴 Offline Mode',
+    `${asset}: market unavailable — bots paused, NN training continues`,
+    'default'
+  );
+
+  // Start offline learning loop
+  if (s.brain) startOfflineTraining(asset, s.brain);
+
+  // Poll every 30s — resume when market comes back
+  _offlinePollers[asset] = setInterval(async () => {
+    try {
+      const market = await findActiveMarket(asset);
+      await exitOfflineMode(asset, market);
+    } catch {
+      // Market still unavailable — keep training, log every 5 polls
+      const polls = (_offlinePollers[asset + '_count'] = (_offlinePollers[asset + '_count'] ?? 0) + 1);
+      if (polls % 5 === 0) {
+        const samples = s.brain?.data?.length ?? 0;
+        console.log(`[Offline] ${asset} — still waiting for market (${samples} samples trained)`);
+      }
+    }
+  }, OFFLINE_POLL_MS);
+}
+
+/**
+ * Exit offline mode when a market becomes available.
+ * Restores armed state, reconnects WS, resumes bot tick.
+ */
+async function exitOfflineMode(asset, market) {
+  clearInterval(_offlinePollers[asset]);
+  delete _offlinePollers[asset];
+  delete _offlinePollers[asset + '_count'];
+  _offlineMode[asset]   = false;
+  _marketFails[asset]   = 0;
+
+  // Stop offline trainer now that live data is flowing again
+  stopOfflineTraining(asset);
+
+  const s = state[asset];
+  s.ticker          = market.ticker;
+  s.windowId        = windowId();
+  s.farmRounds      = 0;
+  s.ticksAbove      = 0;
+  s.ticksTotal      = 0;
+  s.windowOpenPrice = priceFeed.getPrice(asset);
+  s.yesAsk          = null;
+  s.yesBid          = null;
+
+  // Reconnect Kalshi WS to new ticker
+  kalshiWS[asset].switchTicker(market.ticker);
+
+  // Restore the armed state that was active before the market went down
+  const saved = _armedBeforeOffline[asset] ?? {};
+  s.farmArmed    = saved.farmArmed    ?? false;
+  s.autoBuyArmed = saved.autoBuyArmed ?? false;
+
+  const armedLabel = s.farmArmed ? 'FARM' : (s.autoBuyArmed ? 'AUTO_BUY' : 'disarmed');
+  console.log(`[Clock] ${asset} market found (${market.ticker}) — bots resuming (${armedLabel})`);
+  notify('🟢 Market Resumed', `${asset}: new market found — bots back online (${armedLabel})`, 'success');
+}
+
 let _lastBalanceFetch = 0;
+let _tickActive = false; // prevents concurrent tick executions (async tick > 1s causes race conditions)
 
 async function tick() {
+  if (_tickActive) return;
+  _tickActive = true;
+  try {
+    await _tickBody();
+  } finally {
+    _tickActive = false;
+  }
+}
+
+async function _tickBody() {
   const now = Date.now();
   const sl = secsLeft();
   const wid = windowId();
   const hour = etHour();
 
-  // Refresh balance every 30s
-  if (now - _lastBalanceFetch > 30_000) {
+  // Refresh balance every 30s.
+  // In DRY_RUN mode with PAPER_BALANCE set, use the simulated balance instead.
+  const paperBalance = process.env.DRY_RUN === 'true' && process.env.PAPER_BALANCE
+    ? parseFloat(process.env.PAPER_BALANCE) : null;
+  if (paperBalance !== null) {
+    state.balance = paperBalance;
+    _lastBalanceFetch = now;
+  } else if (!state.simMode && now - _lastBalanceFetch > 30_000) {
     try {
-      state.balance = (await getBalance()) / 100; // cents → dollars
+      const realBalance = (await getBalance()) / 100;
+      state.balance = realBalance;
       _lastBalanceFetch = now;
+
+      // Auto-switch to sim mode when real balance is too low to trade
+      if (realBalance < state.SIM_TRIGGER_THRESHOLD && !state.simMode) {
+        state.simMode = true;
+        state.paperBalance = 10.00;
+        state.balance = state.paperBalance;
+        console.log('[Clock] Balance depleted — switching to SIM MODE. NN will keep training on paper trades.');
+        notify('📚 Sim Mode Active', `Balance $${realBalance.toFixed(2)} — training on paper trades with $10.00`, 'default');
+      }
     } catch {}
+  } else if (state.simMode) {
+    // In sim mode use paper balance; only check real balance if no sim_override active
+    state.balance = state.paperBalance;
+    const hasOverride = (() => {
+      try { return JSON.parse(fs.readFileSync(new URL('../../data/sim_override.json', import.meta.url), 'utf8')).forceSimMode; } catch { return false; }
+    })();
+    if (!hasOverride && now - _lastBalanceFetch > 30_000) {
+      try {
+        const realBalance = (await getBalance()) / 100;
+        _lastBalanceFetch = now;
+        if (realBalance >= state.SIM_LIVE_THRESHOLD) {
+          state.simMode = false;
+          state.balance = realBalance;
+          console.log(`[Clock] Real balance $${realBalance.toFixed(2)} detected — switching back to LIVE MODE.`);
+          notify('💰 Live Mode Restored', `Real balance $${realBalance.toFixed(2)} detected — back to live trading`, 'default');
+        }
+      } catch {}
+    }
   }
 
   for (const asset of ['BTC', 'ETH']) {
     const s = state[asset];
-    s.secsLeft  = sl;
-    s.liquidity = getLiquidity(asset, hour, s.yesAsk, s.yesBid);
-    s.regime    = priceFeed.getRegime(asset);
+    s.secsLeft   = sl;
+    s.spotPrice  = priceFeed.getPrice(asset);
+    s.liquidity  = getLiquidity(asset, hour, s.yesAsk, s.yesBid);
+    s.regime     = priceFeed.getRegime(asset);
+    s._simMode   = state.simMode; // sync sim flag so riskManager can check it
 
     // Recompute YES velocity at 1Hz from a 5-second price window.
     // The WS fires 60+/s but price only moves occasionally, so computing velocity
@@ -170,15 +323,25 @@ async function tick() {
     // Window roll detection — only advance windowId on success so that a
     // failed lookup retries on the next tick. The _rolling lock in onWindowRoll
     // prevents concurrent in-flight calls for the same asset.
-    if (s.windowId === null) {
+    // Skip this block entirely while in offline mode — the exitOfflineMode poller
+    // takes over market-finding and will update windowId when successful.
+    if (_offlineMode[asset]) {
+      // Nothing to do here — poller handles reconnection
+    } else if (s.windowId === null) {
       s.windowId = wid; // initial set on startup
-    } else if (s.windowId !== wid) {
+    } else if (s.windowId !== wid || !s.ticker) {
       const ok = await onWindowRoll(asset);
-      if (ok) s.windowId = wid; // retry next tick if market lookup failed
-    } else if (!s.ticker) {
-      // Startup init failed — retry market lookup in the current window
-      const ok = await onWindowRoll(asset);
-      if (ok) s.windowId = wid;
+      if (ok === true) {
+        s.windowId = wid;
+        _marketFails[asset] = 0; // reset on success
+      } else if (ok === false) {
+        // Only count completed attempts (not rolling-lock short-circuits which return null)
+        _marketFails[asset]++;
+        if (_marketFails[asset] >= OFFLINE_THRESHOLD) {
+          enterOfflineMode(asset);
+        }
+      }
+      // ok === null → already in progress or offline, skip silently
     }
 
     // Skip if no market data
@@ -196,8 +359,8 @@ async function tick() {
       await checkExit(ctx);
     }
 
-    // New entry only when flat
-    if (!s.activeTrade) {
+    // New entry only when flat — skip disabled assets (sim training focus)
+    if (!s.activeTrade && !state.disabledAssets.includes(asset)) {
       if (s.farmArmed)     await checkFarmBot(ctx);
       else if (s.autoBuyArmed) await checkAutoBuy(ctx);
     }
@@ -207,6 +370,23 @@ async function tick() {
 export async function startClock() {
   console.log('[Clock] Starting price feeds...');
   priceFeed.connect();
+
+  // Check for sim override file — persists sim mode across restarts
+  try {
+    const override = JSON.parse(fs.readFileSync(
+      new URL('../../data/sim_override.json', import.meta.url), 'utf8'
+    ));
+    if (override.forceSimMode) {
+      state.simMode = true;
+      state.paperBalance = override.paperBalance ?? 50.00;
+      state.balance = state.paperBalance;
+      console.log(`[Clock] SIM OVERRIDE active — paper balance $${state.paperBalance.toFixed(2)}`);
+    }
+    if (Array.isArray(override.disabledAssets) && override.disabledAssets.length) {
+      state.disabledAssets = override.disabledAssets.map(a => a.toUpperCase());
+      console.log(`[Clock] Disabled assets: ${state.disabledAssets.join(', ')}`);
+    }
+  } catch {}
 
   console.log('[Clock] Loading brains...');
   state.BTC.brain = await loadBrain('BTC');

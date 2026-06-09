@@ -138,10 +138,28 @@ export async function findActiveMarket(asset) {
 
 // Orders
 export async function placeOrder(body) {
+  if (process.env.DRY_RUN === 'true') {
+    const sidePrice = body.yes_price_dollars
+      ? parseFloat(body.yes_price_dollars)
+      : 1 - parseFloat(body.no_price_dollars);
+    console.log(`[DryRun] ${body.action.toUpperCase()} ${body.side.toUpperCase()} ×${body.count} ${body.ticker} @ ${sidePrice.toFixed(4)}`);
+    return {
+      order: {
+        order_id: 'sim_' + Date.now().toString(36),
+        status: 'executed',
+        remaining_count: 0,
+        action: body.action,
+        side: body.side,
+        count: body.count,
+        ticker: body.ticker,
+      },
+    };
+  }
   return request('POST', '/portfolio/orders', body);
 }
 
 export async function cancelOrder(orderId) {
+  if (process.env.DRY_RUN === 'true') return;
   return request('DELETE', `/portfolio/orders/${orderId}`);
 }
 

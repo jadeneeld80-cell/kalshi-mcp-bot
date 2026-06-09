@@ -1,7 +1,8 @@
-// 9 → 8 → 1 neural network with sigmoid activation
+// 13 → 8 → 1 neural network with sigmoid activation
 // Three NNs per asset: combined (normalised), UP-only, DOWN-only
+// Feature vector: 9 price indicators + secsLeft, ADX, pctAbove, spread
 
-const INPUT = 9;
+const INPUT = 13;
 const HIDDEN = 8;
 const OUTPUT = 1;
 const LEARNING_RATE = 0.05;
@@ -34,7 +35,24 @@ export function initWeights() {
     // DOWN-only NN
     w1Down: randomWeights(HIDDEN, INPUT), b1Down: randomBias(HIDDEN),
     w2Down: randomWeights(OUTPUT, HIDDEN), b2Down: randomBias(OUTPUT),
+    // MOMENTUM mode NN — trained only on MOMENTUM-mode trades (raw features)
+    w1Momentum: randomWeights(HIDDEN, INPUT), b1Momentum: randomBias(HIDDEN),
+    w2Momentum: randomWeights(OUTPUT, HIDDEN), b2Momentum: randomBias(OUTPUT),
+    // ALIGNED mode NN — trained only on ALIGNED-mode trades (raw features)
+    w1Aligned: randomWeights(HIDDEN, INPUT), b1Aligned: randomBias(HIDDEN),
+    w2Aligned: randomWeights(OUTPUT, HIDDEN), b2Aligned: randomBias(OUTPUT),
   };
+}
+
+// Recency weight: exponential decay with 30-day half-life.
+// New samples (ts ≈ now) → weight ≈ 1.0.
+// Samples from 30 days ago → weight ≈ 0.5.
+// Samples from 90 days ago → weight ≈ 0.125.
+// Without ts (old brain files) → weight = 1.0 (no penalty).
+function recencyWeight(ts) {
+  if (!ts) return 1.0;
+  const daysSince = (Date.now() - ts) / (24 * 3600 * 1000);
+  return Math.exp(-daysSince * Math.LN2 / 30);
 }
 
 // Forward pass — returns { hidden, output } (both as arrays)
@@ -87,64 +105,122 @@ function buildBatch(data, batchSize) {
   return [...sample(wins, half), ...sample(losses, half)].sort(() => Math.random() - 0.5);
 }
 
-// Train all three NNs on new data
-export function train(weights, data, dataUp, dataDown) {
+// Train all NNs on new data.
+// dataMomentum/dataAligned are mode-specific sample buffers (optional).
+// Recency weighting (30-day half-life) is applied to all NNs so stale
+// March-era samples lose influence as April+ data accumulates.
+export function train(weights, data, dataUp, dataDown, dataMomentum = [], dataAligned = []) {
   // Cap buffer sizes
   const trimmed = (arr) => {
     const wins  = arr.filter(d => d.l === 1).slice(-MAX_SAMPLES_PER_CLASS);
     const losses = arr.filter(d => d.l === 0).slice(-MAX_SAMPLES_PER_CLASS);
     return [...wins, ...losses];
   };
-  const allData  = trimmed(data);
-  const allUp    = trimmed(dataUp);
-  const allDown  = trimmed(dataDown);
+  const allData     = trimmed(data);
+  const allUp       = trimmed(dataUp);
+  const allDown     = trimmed(dataDown);
+  const allMomentum = trimmed(dataMomentum);
+  const allAligned  = trimmed(dataAligned);
 
   for (let epoch = 0; epoch < EPOCHS; epoch++) {
     // Combined NN
+    // d.q = soft quality label (0.5–1.0 for wins, 0 for losses) set by recordTrade
+    // d.w = gradient weight; d.ts = timestamp for recency weighting
     const batch = buildBatch(allData, TRAIN_BATCH);
-    for (const { f, l } of batch) {
-      // DOWN bets in combined NN get weighted loss
-      const isDown = f[0] < 0; // proxy: normalised features are flipped for DOWN
-      const lw = (isDown && l === 0) ? DOWN_LOSS_WEIGHT : 1;
-      backprop(weights.w1, weights.b1, weights.w2, weights.b2, f, l, lw);
+    for (const { f, l, q, w, ts } of batch) {
+      const target      = q ?? l;
+      const isDown      = f[0] < 0;
+      const downPenalty = (isDown && l === 0) ? DOWN_LOSS_WEIGHT : 1;
+      const rw          = recencyWeight(ts);
+      const lw          = Math.min((w ?? 1) * downPenalty * rw, 6);
+      backprop(weights.w1, weights.b1, weights.w2, weights.b2, f, target, lw);
     }
 
-    // UP-only NN
+    // UP-only NN — recency-weighted, cap at 4×
     if (allUp.length >= 4) {
       const batchUp = buildBatch(allUp, Math.min(TRAIN_BATCH, allUp.length));
-      for (const { f, l } of batchUp) {
-        backprop(weights.w1Up, weights.b1Up, weights.w2Up, weights.b2Up, f, l);
+      for (const { f, l, q, w, ts } of batchUp) {
+        const target = q ?? l;
+        const rw     = recencyWeight(ts);
+        const lw     = Math.min((w ?? 1) * rw, 4);
+        backprop(weights.w1Up, weights.b1Up, weights.w2Up, weights.b2Up, f, target, lw);
       }
     }
 
-    // DOWN-only NN (penalise misses more)
+    // DOWN-only NN — outcome weight + DOWN bias correction, recency-weighted, cap at 6×
     if (allDown.length >= 4) {
       const batchDown = buildBatch(allDown, Math.min(TRAIN_BATCH, allDown.length));
-      for (const { f, l } of batchDown) {
-        const lw = l === 0 ? DOWN_LOSS_WEIGHT : 1;
-        backprop(weights.w1Down, weights.b1Down, weights.w2Down, weights.b2Down, f, l, lw);
+      for (const { f, l, q, w, ts } of batchDown) {
+        const target      = q ?? l;
+        const downPenalty = l === 0 ? DOWN_LOSS_WEIGHT - 1 : 0;
+        const rw          = recencyWeight(ts);
+        const lw          = Math.min(((w ?? 1) + downPenalty) * rw, 6);
+        backprop(weights.w1Down, weights.b1Down, weights.w2Down, weights.b2Down, f, target, lw);
+      }
+    }
+
+    // MOMENTUM mode NN — raw features, recency-weighted
+    if (allMomentum.length >= 4 && weights.w1Momentum) {
+      const batchM = buildBatch(allMomentum, Math.min(TRAIN_BATCH, allMomentum.length));
+      for (const { f, l, q, w, ts } of batchM) {
+        const target = q ?? l;
+        const rw     = recencyWeight(ts);
+        const lw     = Math.min((w ?? 1) * rw, 4);
+        backprop(weights.w1Momentum, weights.b1Momentum, weights.w2Momentum, weights.b2Momentum, f, target, lw);
+      }
+    }
+
+    // ALIGNED mode NN — raw features, recency-weighted
+    if (allAligned.length >= 4 && weights.w1Aligned) {
+      const batchA = buildBatch(allAligned, Math.min(TRAIN_BATCH, allAligned.length));
+      for (const { f, l, q, w, ts } of batchA) {
+        const target = q ?? l;
+        const rw     = recencyWeight(ts);
+        const lw     = Math.min((w ?? 1) * rw, 4);
+        backprop(weights.w1Aligned, weights.b1Aligned, weights.w2Aligned, weights.b2Aligned, f, target, lw);
       }
     }
   }
 }
 
-// Ensemble prediction — weighted by sample count, direction-aware.
+// Ensemble prediction — weighted by sample count, direction-aware + mode-aware.
 // featuresNorm must already be flipped for DOWN bets (caller's responsibility).
 // bet determines which directional NN joins the ensemble.
-export function predict(weights, features, featuresNorm, bet, dataUp, dataDown) {
-  const combined = forward(weights.w1, weights.b1, weights.w2, weights.b2, featuresNorm).output[0];
+// mode + modeData optionally add a mode-specialized NN (MOMENTUM or ALIGNED).
+// Minimum 8 mode samples required before mode NN enters the ensemble.
+const MIN_MODE_SAMPLES = 8;
 
-  if (bet === 'UP') {
-    if (!dataUp.length) return combined;
+export function predict(weights, features, featuresNorm, bet, dataUp, dataDown, mode = null, modeData = []) {
+  const combined = forward(weights.w1, weights.b1, weights.w2, weights.b2, featuresNorm).output[0];
+  let sum = combined;
+  let n = 1;
+
+  // Direction-specific NN
+  if (bet === 'UP' && dataUp.length) {
     const upPred = forward(weights.w1Up, weights.b1Up, weights.w2Up, weights.b2Up, features).output[0];
-    const n = dataUp.length;
-    return (combined + upPred * n) / (1 + n);
-  } else {
-    if (!dataDown.length) return combined;
+    sum += upPred * dataUp.length;
+    n   += dataUp.length;
+  } else if (bet === 'DOWN' && dataDown.length) {
     const downPred = forward(weights.w1Down, weights.b1Down, weights.w2Down, weights.b2Down, features).output[0];
-    const n = dataDown.length;
-    return (combined + downPred * n) / (1 + n);
+    sum += downPred * dataDown.length;
+    n   += dataDown.length;
   }
+
+  // Mode-specific NN — joins ensemble once it has enough samples
+  if (modeData.length >= MIN_MODE_SAMPLES) {
+    let modePred = null;
+    if (mode === 'MOMENTUM' && weights.w1Momentum) {
+      modePred = forward(weights.w1Momentum, weights.b1Momentum, weights.w2Momentum, weights.b2Momentum, features).output[0];
+    } else if (mode === 'ALIGNED' && weights.w1Aligned) {
+      modePred = forward(weights.w1Aligned, weights.b1Aligned, weights.w2Aligned, weights.b2Aligned, features).output[0];
+    }
+    if (modePred !== null) {
+      sum += modePred * modeData.length;
+      n   += modeData.length;
+    }
+  }
+
+  return sum / n;
 }
 
 // Add a sample to the training data arrays, maintaining buffer caps

@@ -13,6 +13,7 @@
 import { DEFAULTS, BOUNDS, saveParams } from './params.js';
 import { simulate } from './simulator.js';
 import { evaluate } from './evaluator.js';
+import { getCalibratedScore } from './discrepancy.js';
 
 const DELTA = 0.10;       // 10% perturbation per step
 const MIN_TRADES = 3;     // min trades in sim before scoring
@@ -49,7 +50,7 @@ export async function optimizeStep(snapshots, currentParams, baselineScore, onPr
       if (trades.length < MIN_TRADES) continue;
 
       const result  = evaluate(trades, candidateParams);
-      const newScore = result.overallScore;
+      const newScore = getCalibratedScore(result.overallScore, trades);
       const accepted = newScore > bestScore;
 
       if (accepted) {
@@ -86,7 +87,9 @@ export async function optimize({
 }) {
   let params = { ...DEFAULTS, ...initialParams };
   const trades0 = simulate(snapshots, params);
-  const baseline = trades0.length >= MIN_TRADES ? evaluate(trades0, params).overallScore : 0;
+  const baseline = trades0.length >= MIN_TRADES
+    ? getCalibratedScore(evaluate(trades0, params).overallScore, trades0)
+    : 0;
   let bestScore = baseline;
 
   console.log(`[Optimizer] Baseline score: ${(baseline * 100).toFixed(1)}% over ${trades0.length} trades`);

@@ -2,7 +2,8 @@ import WebSocket from 'ws';
 import { buildHeaders } from './client.js';
 
 const WS_URL = 'wss://api.elections.kalshi.com/trade-api/ws/v2';
-const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_DELAY_MS  = 3000;
+const HEARTBEAT_TIMEOUT_MS = 15_000; // force reconnect if no orderbook message for 15s
 
 export class KalshiWebSocket {
   constructor(onPrice) {
@@ -13,6 +14,7 @@ export class KalshiWebSocket {
     this.intentionalClose = false;
     this.cmdSeq = 1;
     this._sid = null;  // subscription ID returned by server — needed for unsubscribe
+    this._heartbeatTimer = null; // watchdog — triggers reconnect if feed goes silent
 
     // In-memory orderbook: price (as string) → quantity (as float)
     // yesBook: bids for YES contracts
@@ -44,6 +46,7 @@ export class KalshiWebSocket {
 
     this.ws.on('open', () => {
       this._subscribe(this.ticker);
+      this._resetHeartbeat();
     });
 
     // Kalshi sends Ping frames (0x9) every 10s with body "heartbeat".
@@ -62,10 +65,12 @@ export class KalshiWebSocket {
     });
 
     this.ws.on('close', () => {
+      this._clearHeartbeat();
       if (!this.intentionalClose) this._scheduleReconnect();
     });
 
     this.ws.on('error', () => {
+      this._clearHeartbeat();
       if (!this.intentionalClose) this._scheduleReconnect();
     });
   }
@@ -140,6 +145,7 @@ export class KalshiWebSocket {
     // Compute best bid/ask from current orderbook state
     const { yesAsk, yesBid } = this._bestPrices();
     if (yesAsk !== null && yesBid !== null) {
+      this._resetHeartbeat(); // feed is live — reset watchdog
       this.onPrice(yesAsk, yesBid, data.market_ticker || this.ticker);
     }
   }
@@ -204,6 +210,21 @@ export class KalshiWebSocket {
     }
   }
 
+  _resetHeartbeat() {
+    clearTimeout(this._heartbeatTimer);
+    this._heartbeatTimer = setTimeout(() => {
+      // No orderbook message for HEARTBEAT_TIMEOUT_MS — zombie connection, force reconnect
+      console.log(`[WS] Heartbeat timeout for ${this.ticker} — forcing reconnect`);
+      this._clearHeartbeat();
+      this._open();
+    }, HEARTBEAT_TIMEOUT_MS);
+  }
+
+  _clearHeartbeat() {
+    clearTimeout(this._heartbeatTimer);
+    this._heartbeatTimer = null;
+  }
+
   _scheduleReconnect() {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => this._open(), RECONNECT_DELAY_MS);
@@ -211,6 +232,7 @@ export class KalshiWebSocket {
 
   close() {
     this.intentionalClose = true;
+    this._clearHeartbeat();
     clearTimeout(this.reconnectTimer);
     this.ws?.close();
   }

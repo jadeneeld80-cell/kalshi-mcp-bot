@@ -92,6 +92,95 @@ export function candleMomentum(candles) {
   return wTotal > 0 ? Math.max(-1, Math.min(1, momentum / wTotal * 100)) : 0;
 }
 
+/**
+ * computeATR — Average True Range over pseudo-candles (Wilder smoothing).
+ * TR = max(high-low, |high-prevClose|, |low-prevClose|)
+ * Returns the current ATR value, or null if not enough candles.
+ */
+export function computeATR(candles, period = 14) {
+  if (candles.length < period + 1) return null;
+  const slice = candles.slice(-(period + 1));
+
+  // Seed with simple average of first `period` true ranges
+  let atr = 0;
+  for (let i = 1; i <= period; i++) {
+    const c = slice[i], prev = slice[i - 1];
+    atr += Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+  }
+  atr /= period;
+
+  // Wilder smooth over any remaining candles
+  for (let i = period + 1; i < slice.length; i++) {
+    const c = slice[i], prev = slice[i - 1];
+    const tr = Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+    atr = (atr * (period - 1) + tr) / period;
+  }
+  return atr;
+}
+
+/**
+ * computeADX — Average Directional Index (Wilder, period=14).
+ * Measures trend strength regardless of direction (0=none, 25+=trending, 40+=strong).
+ * Returns { adx, plusDI, minusDI } or null if not enough data.
+ */
+export function computeADX(candles, period = 14) {
+  if (candles.length < period * 2) return null;
+  const slice = candles.slice(-(period * 2 + 1));
+
+  let smoothATR = 0, smoothPlusDM = 0, smoothMinusDM = 0;
+
+  // Seed: first `period` bars
+  for (let i = 1; i <= period; i++) {
+    const c = slice[i], prev = slice[i - 1];
+    const tr = Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+    const upMove   = c.high - prev.high;
+    const downMove = prev.low - c.low;
+    const plusDM  = (upMove > downMove   && upMove > 0)   ? upMove   : 0;
+    const minusDM = (downMove > upMove   && downMove > 0) ? downMove : 0;
+    smoothATR    += tr;
+    smoothPlusDM += plusDM;
+    smoothMinusDM += minusDM;
+  }
+
+  // Wilder smooth subsequent bars
+  let adx = 0;
+  let dxSum = 0;
+  for (let i = period + 1; i < slice.length; i++) {
+    const c = slice[i], prev = slice[i - 1];
+    const tr = Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close));
+    const upMove   = c.high - prev.high;
+    const downMove = prev.low - c.low;
+    const plusDM  = (upMove > downMove   && upMove > 0)   ? upMove   : 0;
+    const minusDM = (downMove > upMove   && downMove > 0) ? downMove : 0;
+
+    smoothATR     = smoothATR    - smoothATR    / period + tr;
+    smoothPlusDM  = smoothPlusDM - smoothPlusDM / period + plusDM;
+    smoothMinusDM = smoothMinusDM - smoothMinusDM / period + minusDM;
+
+    const plusDI  = smoothATR > 0 ? (smoothPlusDM  / smoothATR) * 100 : 0;
+    const minusDI = smoothATR > 0 ? (smoothMinusDM / smoothATR) * 100 : 0;
+    const diSum   = plusDI + minusDI;
+    const dx      = diSum > 0 ? (Math.abs(plusDI - minusDI) / diSum) * 100 : 0;
+    dxSum += dx;
+  }
+
+  // ADX = average DX over the second half of the slice
+  adx = dxSum / period;
+
+  const lastC = slice[slice.length - 1];
+  const lastP = slice[slice.length - 2];
+  const lastTR = Math.max(lastC.high - lastC.low, Math.abs(lastC.high - lastP.close), Math.abs(lastC.low - lastP.close));
+  const lastUp   = lastC.high - lastP.high;
+  const lastDown = lastP.low  - lastC.low;
+  smoothATR     = smoothATR     - smoothATR     / period + lastTR;
+  smoothPlusDM  = smoothPlusDM  - smoothPlusDM  / period + ((lastUp > lastDown && lastUp > 0) ? lastUp : 0);
+  smoothMinusDM = smoothMinusDM - smoothMinusDM / period + ((lastDown > lastUp && lastDown > 0) ? lastDown : 0);
+  const plusDI  = smoothATR > 0 ? (smoothPlusDM  / smoothATR) * 100 : 0;
+  const minusDI = smoothATR > 0 ? (smoothMinusDM / smoothATR) * 100 : 0;
+
+  return { adx, plusDI, minusDI };
+}
+
 // Market regime from recent price volatility
 export function computeRegime(prices, window = 30) {
   if (prices.length < window) return 'NORMAL';

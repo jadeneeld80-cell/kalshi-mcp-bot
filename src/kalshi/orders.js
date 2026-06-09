@@ -1,4 +1,5 @@
 import { placeOrder, cancelOrder, getOrders } from './client.js';
+import { state } from '../engine/state.js';
 
 // UP bet  → buy YES side  → count = floor(amount / ask_yes_price)
 // DOWN bet → buy NO side  → count = floor(amount / (1 - bid_yes_price))
@@ -58,6 +59,11 @@ export function buildSellBody(ticker, side, contractsHeld) {
 
 export async function executeBuy(ticker, bet, amount, yesAsk, yesBid) {
   const body = buildBuyBody(ticker, bet, amount, yesAsk, yesBid);
+  // Sim mode — paper trade, no API call
+  if (state.simMode || process.env.DRY_RUN === 'true') {
+    console.log(`[SIM] BUY ${bet} $${amount.toFixed(2)} @ ${bet === 'UP' ? yesAsk : (1-yesBid)}`);
+    return { body, result: { order: { remaining_count: 0 }, sim: true } };
+  }
   const result = await placeOrder(body);
   return { body, result };
 }
@@ -75,6 +81,12 @@ export async function cancelOpenOrders(ticker) {
 }
 
 export async function executeSell(ticker, side, contractsHeld) {
+  // Sim mode — paper trade, no API call
+  if (state.simMode || process.env.DRY_RUN === 'true') {
+    const body = buildSellBody(ticker, side, contractsHeld);
+    console.log(`[SIM] SELL ${side} ${contractsHeld} contracts`);
+    return { body, result: { order: {}, sim: true } };
+  }
   await cancelOpenOrders(ticker);
   const body = buildSellBody(ticker, side, contractsHeld);
   const result = await placeOrder(body);
