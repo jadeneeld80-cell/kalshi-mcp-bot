@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TRADES_LOG = path.join(__dirname, '../../logs/trades.json');
+fs.mkdirSync(path.dirname(TRADES_LOG), { recursive: true });
 
 const STOP_LOSS = { CALM: 0.15, NORMAL: 0.12, CHOPPY: 0.10 };
 
@@ -199,8 +200,14 @@ async function executeExit(asset, s, reason, unrealizedPnL) {
   await notify(`${emoji} ${asset} Exit — ${reason}`, `${trade.mode} ${trade.bet} | PnL: $${unrealizedPnL.toFixed(3)}`, 'default');
 
   try {
-    await executeSell(trade.ticker, trade.side, trade.count);
-  } catch (err) {
+  await executeSell(trade.ticker, trade.side, trade.count);
+
+  // Sell succeeded — immediately mark the position closed so
+  // any later logging/error cannot sell the same trade again.
+  s.lastExitTime = Date.now();
+  s.activeTrade = null;
+
+} catch (err) {
     // If market is finalized, Kalshi already settled the position — clear it
     if (err.message.includes('market_not_found')) {
       try {
