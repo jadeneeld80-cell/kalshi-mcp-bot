@@ -91,7 +91,13 @@ export async function checkAutoBuy(ctx) {
 
   const btcVelocity = priceFeed.getVelocity('BTC', 5);
   const gates = checkGates(s, balance, btcVelocity);
-  if (gates.blocked) return;
+
+if (gates.blocked) {
+  if (Math.random() < 0.05) {
+    console.log(`[AutoBuy] ${asset} blocked: ${gates.reason}`);
+  }
+  return;
+}
 
   const features = buildFeatures(asset);
   if (!features) return;
