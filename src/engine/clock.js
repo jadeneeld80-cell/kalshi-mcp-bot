@@ -1766,6 +1766,25 @@ export async function startClock() {
   // ==========================================================
 
   loadBotState();
+  
+  // Railway-specific bot mode.
+  // Lets multiple Railway services use the same GitHub repo
+  // while running different strategies.
+  const botMode = (process.env.BOT_MODE || '').toUpperCase();
+  
+  if (botMode === 'FARM') {
+    state.BTC.farmArmed = true;
+    state.BTC.autoBuyArmed = false;
+    
+    console.log('[Bot] BTC FARM forced ON by BOT_MODE');
+  }
+  
+  if (botMode === 'AUTO') {
+    state.BTC.autoBuyArmed = true;
+    state.BTC.farmArmed = false;
+    
+    console.log('[Bot] BTC AUTO_BUY forced ON by BOT_MODE');
+  }
 
 
   // ==========================================================
