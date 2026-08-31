@@ -318,6 +318,10 @@ function marketYesPrices(
 async function refreshPublicMarket(
   asset
 ) {
+  if (asset === 'ETH') {
+    return;
+  }
+  
   const s =
     state[asset];
 
